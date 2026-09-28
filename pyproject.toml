@@ -1,0 +1,67 @@
+[project]
+name = "kaggle-gemma-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+readme-files = ["README.md"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Emilio Dávola" }]
+requires-python = ">=3.14"
+dependencies = [
+    "kaggle>=2.2.4",
+]
+
+[project.scripts]
+kaggle-gemma-agent = "kaggle_gemma_4_developer_agent_competition:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest", "ruff", "mypy", "pre-commit", "coverage", "pyright"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = "tests/|\\.venv/"
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
+include = ["src"]
+exclude = ["tests", ".venv", "**/node_modules", "**/__pycache__"]
+reportMissingImports = "error"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+
+[tool.uv.build-backend]
+module-name = "kaggle_gemma_4_developer_agent_competition"
