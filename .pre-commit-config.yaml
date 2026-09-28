@@ -1,0 +1,27 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: a56c0b927e6465d37cae3e97d35d4d18ab2b96cd
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+        # Explicit scope, not the upstream default: ruff-pre-commit widened its
+        # manifest to include `markdown` at 0.16.6, which could let this hook
+        # rewrite fenced Python inside markdown files. Declaring the scope here
+        # keeps a rev bump from widening it silently.
+        types_or: [python, pyi, jupyter]
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy src/
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false

@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kaggle-gemma-agent = "kaggle_gemma_4_developer_agent_competition:main"
+kaggle-gemma-agent = "kaggle_gemma_agent:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
@@ -64,4 +64,4 @@ show_missing = true
 fail_under = 90
 
 [tool.uv.build-backend]
-module-name = "kaggle_gemma_4_developer_agent_competition"
+module-name = "kaggle_gemma_agent"
