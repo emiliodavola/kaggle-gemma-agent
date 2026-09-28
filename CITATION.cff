@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+title: kaggle-gemma-agent
+abstract: "Developer/coding agent for the Kaggle Gemma 4 Developer Agent competition. The agent is packaged and evaluated by the swegemma harness, with Resolution Rate on a 60-minute / 100-tool-call budget as the scored metric."
+version: 0.1.0
+authors:
+  - family-names: Correa Davola
+    given-names: Emilio
+    email: emidavola@gmail.com
+repository-code: "https://github.com/emiliodavola/kaggle-gemma-agent"
+url: "https://github.com/emiliodavola/kaggle-gemma-agent"
+license: MIT
+date-released: 2026-09-28
+keywords:
+  - kaggle
+  - gemma
+  - developer-agent
+  - coding-agent
+  - llm

@@ -216,3 +216,36 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Custom
+.atl/
+competition-metadata.json
+.agents/
+# Custom – Kaggle (credenciales y artefactos, nunca al repo)
+kaggle.json
+submission.zip
+submission.parquet
+results/
+patches/
+test_outputs/
+traces/
+logs/
+*.safetensors
+
+# Custom – data (descargas de Kaggle, no commitear binarios)
+data/raw/
+data/processed/
+*.npz
+*.tgz
+*.parquet
+
+# Custom – workflow probabl/skore (estado local, no commitear)
+.skore/
+scratch/
+report.html
+
+# Custom – Node (skills CLI)
+node_modules/
+
+# Custom – OS
+.DS_Store
