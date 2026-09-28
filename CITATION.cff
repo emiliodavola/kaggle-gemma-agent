@@ -4,9 +4,9 @@ title: kaggle-gemma-agent
 abstract: "Developer/coding agent for the Kaggle Gemma 4 Developer Agent competition. The agent is packaged and evaluated by the swegemma harness, with Resolution Rate on a 60-minute / 100-tool-call budget as the scored metric."
 version: 0.1.0
 authors:
-  - family-names: Davola
+  - family-names: Correa Davola
     given-names: Emilio
-    email: elazeta@gmail.com
+    email: emidavola@gmail.com
 repository-code: "https://github.com/emiliodavola/kaggle-gemma-agent"
 url: "https://github.com/emiliodavola/kaggle-gemma-agent"
 license: MIT
