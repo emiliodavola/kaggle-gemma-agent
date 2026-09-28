@@ -1,4 +1,4 @@
-# kaggle-gemma-4-developer-agent-competition
+# kaggle-gemma-agent
 
 Developer/coding agent for the Kaggle **gemma-4-developer-agent** competition
 (deadline **2026-12-02**). The agent is packaged and evaluated by the
@@ -26,7 +26,7 @@ Kaggle API docs: <https://www.kaggle.com/docs/api>. Never commit the token.
 
 ## Layout
 
-```
+```plaintext
 .
 ├── AGENTS.md          # operating guide (uv, git, submission, budgets)
 ├── README.md          # this file

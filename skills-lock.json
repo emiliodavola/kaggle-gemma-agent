@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "skills": {
+    "add-python-package": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/add-python-package/SKILL.md",
+      "computedHash": "0d587f32eada2d447f82a9169d5756fd2b552f1a864b0526a52abe02ebaf0e98"
+    },
+    "audit-ml-pipeline": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/audit-ml-pipeline/SKILL.md",
+      "computedHash": "1c89827d2d00bddec4e89b360085927a4dcf5523c1b7d4a10c0852e80dfb4d48"
+    },
+    "build-ml-pipeline": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/build-ml-pipeline/SKILL.md",
+      "computedHash": "3f4b42bbe89615035bf1f0c237ac558ef03fed896f648557000736e8e92ceebd"
+    },
+    "choose-python-library": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/choose-python-library/SKILL.md",
+      "computedHash": "97e5df64f0446e83a4f07307336f45f77042559e62b2ec4450401f91d5f11247"
+    },
+    "data-science-python-stack": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/data-science-python-stack/SKILL.md",
+      "computedHash": "8a98ba2c7767a157b008e79270cd335720aca279945e3905db76f8a8eb2e3205"
+    },
+    "evaluate-ml-pipeline": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/evaluate-ml-pipeline/SKILL.md",
+      "computedHash": "455941aac090e981f2b9f066751628992598a7aa7198debd687078ad99daf561"
+    },
+    "explore-ml-data": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/explore-ml-data/SKILL.md",
+      "computedHash": "9c652124531e0fb4c4429525863bc34c83bb9d149b3c214a24f137ad256e5f72"
+    },
+    "export-ml-notebook": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/export-ml-notebook/SKILL.md",
+      "computedHash": "165d08ef240455a0948148eafd2d61fbffc688a294f06a8cc35089f8053f2d84"
+    },
+    "export-ml-project": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/export-ml-project/SKILL.md",
+      "computedHash": "08916c293848a10b69c14042bd6341f10f5c592178756d503573bf7d37dfc531"
+    },
+    "export-ml-site": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/export-ml-site/SKILL.md",
+      "computedHash": "fdad95cbbf1e7edf6ad2739e5b3524778c5fb23df4f626276dafa447bd2200e7"
+    },
+    "frame-ml-problem": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frame-ml-problem/SKILL.md",
+      "computedHash": "11824b9870d8813d2b731a75f077667a682c90b80a327ffa58fd602bf47e086d"
+    },
+    "manage-ml-backlog": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/manage-ml-backlog/SKILL.md",
+      "computedHash": "859c2e598d8dd23399a684f4920893e51ac60a26e3597ecda4ec6628596b18c0"
+    },
+    "model-ml-pipeline": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/model-ml-pipeline/SKILL.md",
+      "computedHash": "011936d2c3e9e6434e36eec7f64fe3286dca37c6fa727a67e0772ee1be034b7f"
+    },
+    "organize-ml-workspace": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/organize-ml-workspace/SKILL.md",
+      "computedHash": "27fe3a8512ceeb9fc26dc92f79c960c40067799a7d6afeb768bb9c2acb4277c2"
+    },
+    "persist-ml-git": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/persist-ml-git/SKILL.md",
+      "computedHash": "1575950f573dc0396ca9009bf1d8f1f53a3613c02956c9d565e5b237f5bc96ce"
+    },
+    "plot-ml-figure": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/plot-ml-figure/SKILL.md",
+      "computedHash": "0b1bb3e230a636e1ec6210beef55790f9ac572e603a6b7155f0a1a515bddd88a"
+    },
+    "research-ml-practice": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/research-ml-practice/SKILL.md",
+      "computedHash": "54dfd84c5c392e122596cae8bc4c023266ec0f0156f1b4ef3055cbfe8d6c3052"
+    },
+    "review-ml-choices": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/review-ml-choices/SKILL.md",
+      "computedHash": "34b1af281dda930b284882df517d142b1cfd7bcd4f4b15c54fab522b99167107"
+    },
+    "review-ml-experiment": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/review-ml-experiment/SKILL.md",
+      "computedHash": "1fdf1dcffb15fb5a6510b6e47debcb8e66bd583f8b3ecf7d8d9bcc41918b948e"
+    },
+    "search-ml-literature": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/search-ml-literature/SKILL.md",
+      "computedHash": "656191061af719b32436be1da737b88e8f25fdb75fda945b575d4e8521fc2c72"
+    },
+    "setup-git": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-git/SKILL.md",
+      "computedHash": "9f01a775992b57ee90cce0580af7987d84102fbecb47a4fa53d21d68e1484af7"
+    },
+    "setup-ml-project": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-ml-project/SKILL.md",
+      "computedHash": "748058d49e5786631a21542488fa172786c4c2b3df678b9f7995e554ea1db4be"
+    },
+    "setup-python-env": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-python-env/SKILL.md",
+      "computedHash": "5d0f9c0acb5fa2faa1ec6364c7e2d7c65be0f878f68e05a7c3a4a608cf6c3f79"
+    },
+    "setup-workspace": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-workspace/SKILL.md",
+      "computedHash": "eb91e4af3220c1ef7c1b485b2e64017b35a4b983ebc7533dbf6e8c64bd010770"
+    },
+    "shape-user-idea": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/shape-user-idea/SKILL.md",
+      "computedHash": "93f8516be3597625b7afadd03838b044e1beaa2b143b60d4fac4f89f4a709320"
+    },
+    "smoke-test-ml-pipeline": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/smoke-test-ml-pipeline/SKILL.md",
+      "computedHash": "c5329167f335e9e1ef933b0716c5860f5137853154f3e0518a055d509b90afa7"
+    },
+    "sync-ml-reports": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sync-ml-reports/SKILL.md",
+      "computedHash": "f4650b3b3b4701295314e64636cc021c369c2016664bde7b4359809e739bdf97"
+    },
+    "triage-ml-task": {
+      "source": "probabl-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/triage-ml-task/SKILL.md",
+      "computedHash": "3f7dcc037ad94a8cd5d5033348f96c2bb930e070f34eef5072709a99e2803592"
+    }
+  }
+}
