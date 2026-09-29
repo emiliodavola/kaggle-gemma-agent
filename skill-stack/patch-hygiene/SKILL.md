@@ -33,7 +33,8 @@ inspection.
 
 1. Confirm the target is a library file before editing.
 2. Put scratch reproductions under `/tmp`.
-3. Make the smallest edit with `edit_file`.
+3. Make the smallest edit with `edit_file`. For a new source file, `write_file`
+   then `run_command git add -N <path>` so it appears in `git diff`.
 4. `run_command git status --short` and `git diff --stat` to review scope.
 5. If any test or config path appears in the diff, revert it.
 6. Submit only the intended source diff.
