@@ -16,4 +16,6 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run ruff check src/ tests/
-      - run: uv run pytest -q
+      - run: uv run coverage run -m pytest tests/ -q
+      - run: uv run coverage report -m
+      - run: uv run python -m kaggle_gemma_agent.pack submission --check
