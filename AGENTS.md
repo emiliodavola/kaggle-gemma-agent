@@ -108,6 +108,6 @@ Load a skill only when the task genuinely matches its trigger.
 
 ## CI
 
-There are no tests yet and the current deliverable is documentation, so no CI
-config is added at this stage. A follow-up issue tracks introducing lightweight
-uv-based checks once the first helper script or test suite lands.
+`.github/workflows/ci.yml` runs on every push to `main` and every PR targeting
+`main`. It is uv-based and runs `uv sync --locked`, `uv run ruff check src/
+tests/`, and `uv run pytest -q`.
