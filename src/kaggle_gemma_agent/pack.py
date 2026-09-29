@@ -7,15 +7,22 @@ access or package installation.
 Archive layout::
 
     submission.zip
-    ├── agent.yaml          # minimal manifest skeleton
-    └── skill-stack/        # skill stack copied verbatim
-        └── ...
+    ├── agent.yaml          # declarative manifest (read from the source root)
+    ├── eval_config.yaml    # optional per-task budgets
+    ├── configs/            # sampling / generation config
+    ├── prompts/            # ``!include`` targets
+    ├── sub_agents/         # optional AgentTool configs
+    └── skills/             # skill stack copied verbatim
+        └── <skill>/SKILL.md
 
 Validation performed before writing the archive:
 
-* the required root entry (``skill-stack/``) exists in the source directory;
+* the required root entry (``skills/``) exists in the source directory;
 * no file named ``agent.py`` is included;
 * the total unpacked size stays strictly below the 3 GiB adapter budget.
+
+``agent.yaml`` is read from the source root when present, so the shipped
+manifest lives under ``submission/`` instead of being hard-coded here.
 """
 
 from __future__ import annotations
@@ -28,14 +35,14 @@ from pathlib import Path
 
 MAX_UNPACKED_BYTES = 3 * 1024**3
 AGENT_MANIFEST = "agent.yaml"
-STACK_DIR = "skill-stack"
+STACK_DIR = "skills"
 FORBIDDEN_NAMES = frozenset({"agent.py"})
 
+# Fallback used only when the source tree ships no ``agent.yaml``; the shipped
+# manifest is ``submission/agent.yaml``.
 AGENT_YAML_SKELETON = """\
-# Minimal agent manifest. Full content lands in a later phase.
-name: kaggle-gemma-agent
-version: "0.1.0"
-skills: skill-stack
+name: kaggle_gemma_agent
+model: gemma-4-31b-it-qat-w4a16-ct
 """
 
 
@@ -58,6 +65,20 @@ def find_forbidden_files(files: Sequence[Path]) -> list[Path]:
     return [path for path in files if path.name in FORBIDDEN_NAMES]
 
 
+def load_agent_manifest(source_dir: Path, override: str | None = None) -> str:
+    """Return the manifest text to write at the archive root.
+
+    *override* wins when provided. Otherwise ``agent.yaml`` at the source root
+    is used, falling back to :data:`AGENT_YAML_SKELETON` when absent.
+    """
+    if override is not None:
+        return override
+    candidate = source_dir / AGENT_MANIFEST
+    if candidate.is_file():
+        return candidate.read_text(encoding="utf-8")
+    return AGENT_YAML_SKELETON
+
+
 def validate_source(source_dir: Path) -> None:
     """Validate the source tree and raise :class:`PackError` on any violation."""
     if not source_dir.is_dir():
@@ -75,20 +96,22 @@ def build_submission(
     source_dir: Path,
     output_path: Path,
     *,
-    agent_manifest: str = AGENT_YAML_SKELETON,
+    agent_manifest: str | None = None,
     max_unpacked_bytes: int = MAX_UNPACKED_BYTES,
 ) -> Path:
     """Build *output_path* from *source_dir* and return its resolved path.
 
-    ``agent_manifest`` is written verbatim at the archive root. Source files
-    under ``skill-stack/`` are copied preserving their relative paths.
+    The manifest is read from *source_dir* unless ``agent_manifest`` overrides
+    it, then written verbatim at the archive root. Source files under
+    ``skills/`` are copied preserving their relative paths.
     """
     source_dir = Path(source_dir)
     output_path = Path(output_path)
     validate_source(source_dir)
+    manifest = load_agent_manifest(source_dir, agent_manifest)
 
     files = iter_source_files(source_dir)
-    unpacked = total_unpacked_size(files) + len(agent_manifest.encode("utf-8"))
+    unpacked = total_unpacked_size(files) + len(manifest.encode("utf-8"))
     if unpacked >= max_unpacked_bytes:
         raise PackError(
             f"unpacked size {unpacked} bytes exceeds limit of {max_unpacked_bytes} bytes"
@@ -96,7 +119,7 @@ def build_submission(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(AGENT_MANIFEST, agent_manifest)
+        archive.writestr(AGENT_MANIFEST, manifest)
         for path in files:
             arcname = path.relative_to(source_dir)
             if str(arcname) == AGENT_MANIFEST:

@@ -33,6 +33,18 @@ def test_build_submission_writes_manifest_and_stack(tmp_path: Path) -> None:
         assert zf.read(pack.AGENT_MANIFEST).decode("utf-8") == pack.AGENT_YAML_SKELETON
 
 
+def test_source_agent_manifest_is_used(tmp_path: Path) -> None:
+    source = _make_source(tmp_path)
+    manifest = "name: custom_agent\nmodel: gemma-4-31b-it-qat-w4a16-ct\n"
+    (source / pack.AGENT_MANIFEST).write_text(manifest, encoding="utf-8")
+
+    archive = pack.build_submission(source, tmp_path / "submission.zip")
+
+    with zipfile.ZipFile(archive) as zf:
+        assert zf.read(pack.AGENT_MANIFEST).decode("utf-8") == manifest
+        assert zf.namelist().count(pack.AGENT_MANIFEST) == 1
+
+
 def test_missing_required_root_entry_raises(tmp_path: Path) -> None:
     source = tmp_path / "empty"
     source.mkdir()
