@@ -28,6 +28,7 @@ manifest lives under ``submission/`` instead of being hard-coded here.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import zipfile
 from collections.abc import Sequence
@@ -35,8 +36,27 @@ from pathlib import Path
 
 MAX_UNPACKED_BYTES = 3 * 1024**3
 AGENT_MANIFEST = "agent.yaml"
+EVAL_CONFIG = "eval_config.yaml"
 STACK_DIR = "skills"
+SKILL_MANIFEST = "SKILL.md"
 FORBIDDEN_NAMES = frozenset({"agent.py"})
+
+# Competition contract, traceable to ``AGENTS.md`` and
+# ``docs/skill-stack-inventory.md`` section A (see PR #9 compliance table).
+REQUIRED_SKILLS = 12
+EXPECTED_MODEL = "gemma-4-31b-it-qat-w4a16-ct"
+MAX_TOOL_CALLS = 100
+MAX_TIME_MINUTES = 60
+MAX_TURNS = 500
+DYNAMIC_IMPORT_TOKENS = ("importlib", "__import__")
+FORBIDDEN_PATTERNS = re.compile(
+    r"https?://|socket|urllib|requests\.|pip install|uv add|mcp|subprocess|\bcurl\b|\bwget\b",
+    re.IGNORECASE,
+)
+MODEL_LINE = re.compile(r"^\s*model:\s*(\S+)")
+BUDGET_LINE = re.compile(
+    r"^\s*(max_tool_calls|max_time_minutes|max_turns|timeout_seconds):\s*(\d+)"
+)
 
 # Fallback used only when the source tree ships no ``agent.yaml``; the shipped
 # manifest is ``submission/agent.yaml``.
@@ -129,6 +149,135 @@ def build_submission(
     return output_path.resolve()
 
 
+def _read_text(path: Path) -> str:
+    """Return *path* decoded as UTF-8, ignoring undecodable bytes."""
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _check_declarative(source_dir: Path, files: Sequence[Path], violations: list[str]) -> None:
+    """Rule a: declarative ``agent.yaml`` only, no code or dynamic imports."""
+    if not (source_dir / AGENT_MANIFEST).is_file():
+        violations.append(
+            f"{AGENT_MANIFEST}: declarative manifest required at the archive root (rule a)"
+        )
+    for path in files:
+        rel = path.relative_to(source_dir)
+        if path.name in FORBIDDEN_NAMES:
+            violations.append(f"{rel}: forbidden file in a declarative submission (rule a)")
+        if path.suffix in {".py", ".yaml", ".yml"}:
+            text = _read_text(path)
+            for token in DYNAMIC_IMPORT_TOKENS:
+                if token in text:
+                    violations.append(f"{rel}: dynamic import '{token}' is not allowed (rule a)")
+
+
+def _check_skills(source_dir: Path, violations: list[str]) -> None:
+    """Rule b: exactly 12 skills, each shipping its own ``SKILL.md``."""
+    stack = source_dir / STACK_DIR
+    if not stack.is_dir():
+        violations.append(f"{STACK_DIR}/: skill stack directory is required (rule b)")
+        return
+    skill_dirs = sorted(path for path in stack.iterdir() if path.is_dir())
+    for skill_dir in skill_dirs:
+        if not (skill_dir / SKILL_MANIFEST).is_file():
+            violations.append(f"{STACK_DIR}/{skill_dir.name}: missing {SKILL_MANIFEST} (rule b)")
+    if len(skill_dirs) != REQUIRED_SKILLS:
+        violations.append(
+            f"{STACK_DIR}/: expected {REQUIRED_SKILLS} skills, found {len(skill_dirs)} (rule b)"
+        )
+
+
+def _check_model(files: Sequence[Path], violations: list[str]) -> None:
+    """Rule c: a single base model id, and the expected one."""
+    model_ids: set[str] = set()
+    for path in files:
+        if path.suffix in {".yaml", ".yml"}:
+            for line in _read_text(path).splitlines():
+                match = MODEL_LINE.match(line)
+                if match:
+                    model_ids.add(match.group(1))
+    if len(model_ids) != 1:
+        found = ", ".join(sorted(model_ids)) or "none"
+        violations.append(f"model: expected exactly one base model id, found [{found}] (rule c)")
+    elif next(iter(model_ids)) != EXPECTED_MODEL:
+        violations.append(
+            f"model: expected '{EXPECTED_MODEL}', found '{next(iter(model_ids))}' (rule c)"
+        )
+
+
+def _check_budgets(source_dir: Path, violations: list[str]) -> None:
+    """Rule d: per-task budgets declared and within the harness limits."""
+    config = source_dir / EVAL_CONFIG
+    if not config.is_file():
+        violations.append(f"{EVAL_CONFIG}: required to declare per-task budgets (rule d)")
+        return
+    budget: dict[str, int] = {}
+    for line in _read_text(config).splitlines():
+        match = BUDGET_LINE.match(line)
+        if match:
+            budget[match.group(1)] = int(match.group(2))
+    limits = (
+        ("max_tool_calls", MAX_TOOL_CALLS),
+        ("max_time_minutes", MAX_TIME_MINUTES),
+        ("max_turns", MAX_TURNS),
+    )
+    for key, limit in limits:
+        if key not in budget:
+            violations.append(f"{EVAL_CONFIG}: missing {key} (rule d)")
+        elif budget[key] > limit:
+            violations.append(f"{EVAL_CONFIG}: {key}={budget[key]} exceeds limit {limit} (rule d)")
+
+
+def _check_forbidden_strings(
+    source_dir: Path, files: Sequence[Path], violations: list[str]
+) -> None:
+    """Rule e: no network, pip, MCP, or subprocess strings anywhere."""
+    for path in files:
+        rel = path.relative_to(source_dir)
+        matches = FORBIDDEN_PATTERNS.finditer(_read_text(path))
+        hits = sorted({match.group(0).lower() for match in matches})
+        for hit in hits:
+            violations.append(f"{rel}: forbidden string '{hit}' (rule e)")
+
+
+def _check_size(
+    source_dir: Path,
+    files: Sequence[Path],
+    max_unpacked_bytes: int,
+    violations: list[str],
+) -> None:
+    """Rule f: the packed archive stays below the 3 GiB budget."""
+    unpacked = total_unpacked_size(files) + len(load_agent_manifest(source_dir).encode("utf-8"))
+    if unpacked >= max_unpacked_bytes:
+        violations.append(
+            f"submission: unpacked size {unpacked} bytes exceeds limit "
+            f"{max_unpacked_bytes} bytes (rule f)"
+        )
+
+
+def check_submission(
+    source_dir: Path, *, max_unpacked_bytes: int = MAX_UNPACKED_BYTES
+) -> list[str]:
+    """Validate the 6-point competition contract and return every violation.
+
+    An empty list means the source tree is compliant. Each violation names the
+    offending file and the contract rule (a-f) it breaks, mirroring the PR #9
+    compliance table.
+    """
+    source_dir = Path(source_dir)
+    if not source_dir.is_dir():
+        return [f"{source_dir}: source directory does not exist (rule a)"]
+    files = iter_source_files(source_dir)
+    violations: list[str] = []
+    _check_declarative(source_dir, files, violations)
+    _check_skills(source_dir, violations)
+    _check_model(files, violations)
+    _check_budgets(source_dir, violations)
+    _check_forbidden_strings(source_dir, files, violations)
+    _check_size(source_dir, files, max_unpacked_bytes, violations)
+    return violations
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry point for the submission packer."""
     parser = argparse.ArgumentParser(
@@ -137,7 +286,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("source", nargs="?", default=".", type=Path)
     parser.add_argument("-o", "--output", default="submission.zip", type=Path)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="validate the 6-point submission contract instead of writing an archive",
+    )
     args = parser.parse_args(argv)
+
+    if args.check:
+        violations = check_submission(args.source)
+        if violations:
+            for violation in violations:
+                print(f"error: {violation}", file=sys.stderr)
+            print(
+                f"submission contract FAILED ({len(violations)} violation(s))",
+                file=sys.stderr,
+            )
+            return 1
+        print("submission contract OK (6/6 points)")
+        return 0
 
     try:
         archive = build_submission(args.source, args.output)

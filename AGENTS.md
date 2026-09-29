@@ -58,6 +58,27 @@ evaluation scripts).
 The archive is evaluated by the `swegemma` harness; keep the package minimal
 and self-contained.
 
+## Compliance gate
+
+No exceptions: a submission that fails any contract point scores **zero**, so
+the gate is mandatory and runs on EVERY PR.
+
+```sh
+uv run python -m kaggle_gemma_agent.pack submission --check
+```
+
+It enforces the 6 points from PR #9 (`check_submission` in
+`src/kaggle_gemma_agent/pack.py`), each violation naming the file and rule:
+
+- **a** — declarative-only `agent.yaml`; no `agent.py`, no dynamic imports.
+- **b** — 12 skills, each shipping `skills/<dir>/SKILL.md`.
+- **c** — a single base model id (`gemma-4-31b-it-qat-w4a16-ct`).
+- **d** — budgets in `eval_config.yaml` within limits (100 calls / 60 min / 500 turns).
+- **e** — no network / pip / MCP / subprocess strings under `submission/`.
+- **f** — packed archive stays **< 3 GiB**.
+
+CI runs it in `.github/workflows/ci.yml`; fix the reported file before pushing.
+
 ## Harness budgets
 
 Per task the agent gets:

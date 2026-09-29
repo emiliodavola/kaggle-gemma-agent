@@ -71,3 +71,78 @@ def test_agent_py_is_rejected(tmp_path: Path) -> None:
 def test_nonexistent_source_raises(tmp_path: Path) -> None:
     with pytest.raises(pack.PackError, match="source directory does not exist"):
         pack.build_submission(tmp_path / "nope", tmp_path / "submission.zip")
+
+
+def _make_compliant_source(root: Path) -> Path:
+    for index in range(pack.REQUIRED_SKILLS):
+        skill_dir = root / pack.STACK_DIR / f"skill-{index:02d}"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / pack.SKILL_MANIFEST).write_text("# Skill\n", encoding="utf-8")
+    (root / pack.AGENT_MANIFEST).write_text(
+        f"name: demo\nmodel: {pack.EXPECTED_MODEL}\n", encoding="utf-8"
+    )
+    (root / pack.EVAL_CONFIG).write_text(
+        "evaluation:\n"
+        f"  max_tool_calls: {pack.MAX_TOOL_CALLS}\n"
+        f"  max_time_minutes: {pack.MAX_TIME_MINUTES}\n"
+        f"  max_turns: {pack.MAX_TURNS}\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_check_submission_passes_on_compliant_source(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    assert pack.check_submission(source) == []
+
+
+def test_check_flags_missing_skill_manifest(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.STACK_DIR / "skill-00" / pack.SKILL_MANIFEST).unlink()
+
+    violations = pack.check_submission(source)
+
+    assert any("skill-00" in v and "missing SKILL.md" in v and "rule b" in v for v in violations)
+
+
+def test_check_flags_multiple_models(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "sub_agents").mkdir()
+    (source / "sub_agents" / "other.yaml").write_text("model: some-other-model\n", encoding="utf-8")
+
+    violations = pack.check_submission(source)
+
+    assert any("exactly one base model id" in v and "rule c" in v for v in violations)
+
+
+def test_check_flags_budget_over_limit(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.EVAL_CONFIG).write_text(
+        f"max_tool_calls: {pack.MAX_TOOL_CALLS + 1}\n", encoding="utf-8"
+    )
+
+    violations = pack.check_submission(source)
+
+    assert any("max_tool_calls" in v and "exceeds limit" in v and "rule d" in v for v in violations)
+
+
+def test_check_flags_forbidden_string(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "prompts").mkdir()
+    (source / "prompts" / "system.md").write_text(
+        "Do not run pip install anything.\n", encoding="utf-8"
+    )
+
+    violations = pack.check_submission(source)
+
+    assert any("forbidden string" in v and "rule e" in v for v in violations)
+
+
+def test_check_flags_agent_py(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "agent.py").write_text("import importlib\n", encoding="utf-8")
+
+    violations = pack.check_submission(source)
+
+    assert any("agent.py" in v and "rule a" in v for v in violations)
