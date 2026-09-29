@@ -67,6 +67,20 @@ Per task the agent gets:
 
 Design and test against these limits.
 
+## Offline sandbox constraint
+
+The scored environment is two air-gapped Docker containers per task: **no
+internet, no pip installs, no MCP, no background processes**. This applies to
+the competition sandbox and to every artifact shipped in the submission,
+including `skills/` — which load as read-only context and cost tokens each turn.
+
+- Forbidden inside the agent and its skills: network calls, `pip`/`uv add`,
+  MCP servers, long-running or background processes, and any download.
+- Skills must stay short, procedural, and mapped to the 9 sandbox tools.
+- Development, training, and data download run **off-Kaggle**, with network.
+
+See `docs/skill-stack-inventory.md` section A for the full constraint list.
+
 ## Skills usage
 
 `.agents/skills/` holds 28 project-only **probabl** skills. They are general ML
