@@ -146,3 +146,108 @@ def test_check_flags_agent_py(tmp_path: Path) -> None:
     violations = pack.check_submission(source)
 
     assert any("agent.py" in v and "rule a" in v for v in violations)
+
+
+def test_load_agent_manifest_override_wins(tmp_path: Path) -> None:
+    source = _make_source(tmp_path)
+
+    assert pack.load_agent_manifest(source, "override: true\n") == "override: true\n"
+
+
+def test_check_flags_missing_agent_manifest(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.AGENT_MANIFEST).unlink()
+
+    violations = pack.check_submission(source)
+
+    assert any("declarative manifest required" in v and "rule a" in v for v in violations)
+
+
+def test_check_flags_missing_skill_stack_dir(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.STACK_DIR / "skill-00" / pack.SKILL_MANIFEST).unlink()
+    (source / pack.STACK_DIR / "skill-00").rmdir()
+
+    violations = pack.check_submission(source)
+
+    assert any("expected" in v and "skills" in v and "rule b" in v for v in violations)
+
+
+def test_check_flags_absent_skill_stack(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    for skill_dir in (source / pack.STACK_DIR).iterdir():
+        (skill_dir / pack.SKILL_MANIFEST).unlink()
+        skill_dir.rmdir()
+    (source / pack.STACK_DIR).rmdir()
+
+    violations = pack.check_submission(source)
+
+    assert any("skill stack directory is required" in v and "rule b" in v for v in violations)
+
+
+def test_check_flags_wrong_model(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.AGENT_MANIFEST).write_text("model: not-the-expected-model\n", encoding="utf-8")
+
+    violations = pack.check_submission(source)
+
+    assert any("expected" in v and pack.EXPECTED_MODEL in v and "rule c" in v for v in violations)
+
+
+def test_check_flags_missing_eval_config(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.EVAL_CONFIG).unlink()
+
+    violations = pack.check_submission(source)
+
+    assert any("per-task budgets" in v and "rule d" in v for v in violations)
+
+
+def test_check_flags_oversized_submission(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    violations = pack.check_submission(source, max_unpacked_bytes=1)
+
+    assert any("exceeds limit" in v and "rule f" in v for v in violations)
+
+
+def test_check_submission_missing_source_dir(tmp_path: Path) -> None:
+    violations = pack.check_submission(tmp_path / "nope")
+
+    assert violations == [f"{tmp_path / 'nope'}: source directory does not exist (rule a)"]
+
+
+def test_main_check_passes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    assert pack.main([str(source), "--check"]) == 0
+    assert "submission contract OK" in capsys.readouterr().out
+
+
+def test_main_check_reports_failures(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.EVAL_CONFIG).unlink()
+
+    assert pack.main([str(source), "--check"]) == 1
+    captured = capsys.readouterr()
+    assert "FAILED" in captured.err
+    assert "error:" in captured.err
+
+
+def test_main_builds_archive(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = _make_source(tmp_path)
+    output = tmp_path / "submission.zip"
+
+    assert pack.main([str(source), "-o", str(output)]) == 0
+    assert output.is_file()
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_main_build_error_returns_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "submission.zip"
+
+    assert pack.main([str(tmp_path / "nope"), "-o", str(output)]) == 1
+    assert not output.exists()
+    assert "error:" in capsys.readouterr().err
