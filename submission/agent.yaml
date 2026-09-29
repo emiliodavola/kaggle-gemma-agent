@@ -2,6 +2,9 @@
 # Schema mirrors the official sample at data/raw/sample_submission/agent.yaml.
 # Declarative only: no agent.py, no dynamic imports, closed registries.
 # The skills/ directory is auto-loaded as read-only context (see docs/skill-stack-inventory.md section A).
+# Per-task budgets (declared in eval_config.yaml, enforced by the harness):
+#   100 tool calls, 60 minutes wall-clock, 500 turns.
+#   `submit_patch` and `get_status` are free and consume no tool calls.
 name: kaggle_gemma_agent
 model: gemma-4-31b-it-qat-w4a16-ct
 # TODO(adapters): add `adapter: <name>` once a PEFT LoRA lands in adapters/<name>/.
