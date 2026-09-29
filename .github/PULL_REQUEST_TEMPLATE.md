@@ -32,13 +32,15 @@ $ uv run pyright
 | File | Lines (+/−) | Description |
 |------|------------|-------------|
 
-## SDD artifacts
+## Design artifacts
 
-<!-- If this change followed SDD, link or list the artifacts. -->
-
-Archived at `openspec/changes/archive/<date>-<change>/`
-
-Specs updated: `openspec/specs/<domain>/spec.md`
+<!-- Pick the option that fits this change:
+- SDD: link the archive and list the updated specs, e.g.
+  Archived at `openspec/changes/archive/<date>-<change>/`
+  Specs updated: `openspec/specs/<domain>/spec.md`
+- ODD: one-line design note or link, no archive required.
+- N/A: one-line reason (e.g. docs-only).
+-->
 
 ## Checklist
 
