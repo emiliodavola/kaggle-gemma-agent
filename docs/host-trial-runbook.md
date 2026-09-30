@@ -6,8 +6,27 @@ unprivileged and has no Docker daemon (`robotina#80`, `#81`), so the harness
 cannot be exercised in CI/dev. **No GPU is needed**: the agent loop is pointed
 at an OpenAI-compatible cloud backend instead of the local vLLM server.
 
-All commands are **PowerShell** (Windows 11). Do not translate them to
-bash-style `head`/`tail`/`grep`.
+The examples below are **PowerShell** (Windows 11), kept as phase reference; the
+runnable entry point is the Python runner in section 0. Do not translate them
+to bash-style `head`/`tail`/`grep`.
+
+## 0. Runner — `scripts/host-trial/run_host_trial.py`
+
+The runnable entry point is the single cross-platform Python runner (the former
+`run-host-trial.ps1` / `.sh` were removed). It walks the seven phases below
+(prereqs → data → image → key guard → `swegemma eval` → archive/report):
+
+```sh
+uv run python scripts/host-trial/run_host_trial.py --results-name run_01
+# ...or, without the repo venv:
+uv run --script scripts/host-trial/run_host_trial.py run_01
+```
+
+Backend settings come from the process environment or a git-ignored `.env` in
+the repo root (the real environment wins). Copy `.env.example` and fill it in;
+`OPENAI_API_KEY` is required and never echoed (masked). `OPENAI_BASE_URL`
+defaults to `https://opencode.ai/zen/go/v1`; `HARNESS_MODEL` is the trial-only
+opencode model id (meaningless for the Kaggle submission).
 
 ## Facts and provenance
 
@@ -159,6 +178,13 @@ kaggle competitions download -c gemma-4-developer-agent -f snapshots/fastapi_155
 
 > **WARNING — never commit the key, never paste it into any file in the repo.**
 > Set it as a process-scoped environment variable so it dies with the window.
+
+The Python runner reads `OPENAI_API_KEY` from the process environment or a
+git-ignored `.env` (see `.env.example`); never commit it. Shell equivalent:
+
+```sh
+export OPENAI_API_KEY="<your-backend-key>"
+```
 
 The operator-specified variable for this trial:
 
