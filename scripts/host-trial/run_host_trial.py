@@ -61,6 +61,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 COMPETITION = "gemma-4-developer-agent"
 WHEELHOUSE_DATASET = "metric/gemma-4-developer-agent-wheelhouse"
+WHEELS_DIRNAME = "wheels/"
+LIST_PAGE_SIZE = 200
+PAGE_TOKEN_MARKER = "Next Page Token ="
 TASK_IDS: tuple[str, ...] = ("fastapi_15661", "fastapi_15588")
 BACKEND_ALIAS = "deepseek-trial"
 SWEGEMMA_TOOL = "swegemma"
@@ -119,6 +122,7 @@ class TrialPaths:
     tasks_file: Path
     snapshots_dir: Path
     wheelhouse_dir: Path
+    wheels_dir: Path
     docker_context: Path
     submission_dir: Path
     models_yaml: Path
@@ -137,6 +141,7 @@ def paths_for(repo_root: Path, results_name: str) -> TrialPaths:
         tasks_file=data_raw / "tasks.jsonl",
         snapshots_dir=data_raw / "snapshots",
         wheelhouse_dir=data_raw / "wheelhouse",
+        wheels_dir=data_raw / "wheels",
         docker_context=data_raw / "docker",
         submission_dir=repo_root / "submission",
         models_yaml=results_dir / GENERATED_MODELS_FILENAME,
@@ -749,6 +754,73 @@ def fetch_data(paths: TrialPaths) -> None:
     _fetch_competition_file("snapshots/fastapi_15588.tgz", paths.snapshots_dir)
 
 
+def _list_competition_wheels() -> list[str]:
+    """List remote competition files under ``wheels/``, paginating until exhausted.
+
+    ``kaggle competitions files`` prints a ``Next Page Token = <token>`` line
+    while further pages exist, so the listing is walked with ``--page-token``
+    until no token comes back. Table rows whose first field starts with
+    ``wheels/`` are the trial dependency artifacts.
+    """
+    remote: list[str] = []
+    page_token: str | None = None
+    while True:
+        cmd = [
+            "kaggle",
+            "competitions",
+            "files",
+            "-c",
+            COMPETITION,
+            "--page-size",
+            str(LIST_PAGE_SIZE),
+        ]
+        if page_token is not None:
+            cmd += ["--page-token", page_token]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise TrialError(
+                f"kaggle competitions files failed (exit {result.returncode}): {detail}"
+            )
+        page_token = None
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(PAGE_TOKEN_MARKER):
+                page_token = stripped[len(PAGE_TOKEN_MARKER) :].strip() or None
+            elif stripped.startswith(WHEELS_DIRNAME):
+                remote.append(stripped.split(maxsplit=1)[0])
+        if page_token is None:
+            break
+    return remote
+
+
+def ensure_trial_wheels(paths: TrialPaths) -> None:
+    """Phase 3b/8: stage the competition's ``wheels/`` deps into ``data/raw/wheels/``.
+
+    ``swegemma`` resolves the task dependency wheels from the directory next to
+    ``tasks.jsonl`` (``resolve_wheels_dir`` in ``swegemma.harness.container_setup``
+    checks ``<tasks_path parent>/wheels``), so staging them here is what lets the
+    air-gapped sandbox bootstrap install the task test dependencies. Skips when a
+    wheel is already present; otherwise lists the remote ``wheels/`` prefix and
+    downloads each file.
+    """
+    phase("Phase 3b/8: ensure trial dependency wheels (data/raw/wheels/)")
+    if any(paths.wheels_dir.glob("*.whl")):
+        note("skip (exists): trial wheels already present")
+        return
+
+    remote_wheels = _list_competition_wheels()
+    if not remote_wheels:
+        raise TrialError(
+            f"no files under '{WHEELS_DIRNAME}' in competition {COMPETITION}; "
+            "cannot stage the trial dependency wheels."
+        )
+    note(f"staging {len(remote_wheels)} wheel(s) into {paths.wheels_dir}")
+    paths.wheels_dir.mkdir(parents=True, exist_ok=True)
+    for remote_file in remote_wheels:
+        _fetch_competition_file(remote_file, paths.wheels_dir)
+
+
 def build_image(paths: TrialPaths) -> None:
     """Phase 5: build the sandbox image from the fetched Dockerfile."""
     phase("Phase 5/8 (runbook sec. 3): build sandbox image")
@@ -798,6 +870,7 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
 def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
     """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``."""
     phase("Phase 7/8 (runbook sec. 6): swegemma eval (2 tasks, competition budgets)")
+    note(f"task wheels: {paths.wheels_dir} (auto-discovered via the tasks directory)")
     if shutil.which(SWEGEMMA_TOOL) is None:
         raise TrialError(
             "swegemma is not on PATH; phase 4 installs it from the local wheelhouse "
@@ -876,6 +949,7 @@ def run(repo_root: Path, results_name: str, env_file: Path) -> Path:
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
     fetch_data(paths)
+    ensure_trial_wheels(paths)
     install_swegemma(paths)
     build_image(paths)
     env = resolve_backend_env(env_file)

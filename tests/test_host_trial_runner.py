@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.server
 import importlib.util
 import os
+import subprocess
 import sys
 import threading
 import urllib.request
@@ -205,6 +206,101 @@ def test_paths_for_points_models_yaml_at_the_generated_file(tmp_path: Path) -> N
     paths = runner.paths_for(tmp_path, "run_02")
 
     assert paths.models_yaml == (tmp_path / "results" / "run_02" / runner.GENERATED_MODELS_FILENAME)
+    assert paths.wheels_dir == tmp_path / "data" / "raw" / "wheels"
+
+
+def test_list_competition_wheels_paginates_and_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pages: dict[str | None, str] = {
+        None: (
+            "Next Page Token = tok-1\n"
+            "name              size  creationDate\n"
+            "wheels/a.whl      10    2026-09-27\n"
+            "snapshots/x.tgz   20    2026-09-27\n"
+        ),
+        "tok-1": "name  size  creationDate\nwheels/b.whl  30  2026-09-27\n",
+    }
+    seen_tokens: list[str | None] = []
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        capture_output: bool = True,
+        text: bool = True,
+        check: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        token = cmd[cmd.index("--page-token") + 1] if "--page-token" in cmd else None
+        seen_tokens.append(token)
+        return subprocess.CompletedProcess(cmd, 0, stdout=pages[token], stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    assert runner._list_competition_wheels() == ["wheels/a.whl", "wheels/b.whl"]
+    assert seen_tokens == [None, "tok-1"]
+
+
+def test_list_competition_wheels_raises_on_cli_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(
+        cmd: list[str],
+        *,
+        capture_output: bool = True,
+        text: bool = True,
+        check: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    with pytest.raises(runner.TrialError):
+        runner._list_competition_wheels()
+
+
+def test_ensure_trial_wheels_skips_when_a_wheel_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    (paths.wheels_dir / "pkg.whl").write_text("wheel-bytes", encoding="utf-8")
+    monkeypatch.setattr(
+        runner, "_list_competition_wheels", lambda: pytest.fail("must not list remote files")
+    )
+
+    runner.ensure_trial_wheels(paths)
+
+
+def test_ensure_trial_wheels_downloads_into_the_wheels_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    monkeypatch.setattr(
+        runner, "_list_competition_wheels", lambda: ["wheels/a.whl", "wheels/b.whl"]
+    )
+    fetched: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        runner,
+        "_fetch_competition_file",
+        lambda remote_file, dest_dir: fetched.append((remote_file, dest_dir)),
+    )
+
+    runner.ensure_trial_wheels(paths)
+
+    assert fetched == [
+        ("wheels/a.whl", paths.wheels_dir),
+        ("wheels/b.whl", paths.wheels_dir),
+    ]
+
+
+def test_ensure_trial_wheels_errors_when_remote_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    monkeypatch.setattr(runner, "_list_competition_wheels", lambda: [])
+
+    with pytest.raises(runner.TrialError):
+        runner.ensure_trial_wheels(paths)
 
 
 class _StubUpstream(http.server.BaseHTTPRequestHandler):
