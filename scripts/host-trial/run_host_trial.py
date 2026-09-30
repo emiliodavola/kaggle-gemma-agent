@@ -6,7 +6,7 @@
 """Single cross-platform runner for the host ``swegemma`` trial.
 
 Port of the former ``run-host-trial.sh`` / ``run-host-trial.ps1`` (PR #15):
-the same seven phases, two tasks (``fastapi_15661``, ``fastapi_15588``) against
+the same eight phases, two tasks (``fastapi_15661``, ``fastapi_15588``) against
 an OpenAI-compatible cloud backend, archived under ``runs/``. Stdlib only, so
 it runs on Windows and Linux either as a uv script::
 
@@ -43,6 +43,7 @@ COMPETITION = "gemma-4-developer-agent"
 WHEELHOUSE_DATASET = "metric/gemma-4-developer-agent-wheelhouse"
 TASK_IDS: tuple[str, ...] = ("fastapi_15661", "fastapi_15588")
 BACKEND_ALIAS = "deepseek-trial"
+SWEGEMMA_TOOL = "swegemma"
 
 OPENAI_API_KEY = "OPENAI_API_KEY"
 OPENAI_BASE_URL = "OPENAI_BASE_URL"
@@ -218,6 +219,81 @@ def build_report_args(run_dir: Path) -> list[str]:
     return [*HARNESS_RUNS, "report", str(run_dir)]
 
 
+def build_swegemma_install_args(wheelhouse_dir: Path) -> list[str]:
+    """Build the ``uv tool install`` argv for the harness CLI from the wheelhouse.
+
+    Only ``swegemma`` ships a console entry point (``swegemma = swegemma.cli:main``);
+    ``adk-submission`` and ``adk-eval-core`` are its transitive dependencies. None of
+    the three are on PyPI, so ``--find-links`` points uv at the local wheelhouse;
+    their public dependencies resolve normally (cached or from PyPI).
+    """
+    return [
+        "uv",
+        "tool",
+        "install",
+        "--find-links",
+        str(wheelhouse_dir),
+        SWEGEMMA_TOOL,
+    ]
+
+
+def uv_tool_bin_dir() -> Path | None:
+    """Return the directory uv installs tool executables into, or ``None``."""
+    result = subprocess.run(
+        ["uv", "tool", "dir", "--bin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    location = result.stdout.strip()
+    if result.returncode != 0 or not location:
+        return None
+    return Path(location)
+
+
+def _prepend_path(directory: Path) -> None:
+    """Prepend *directory* to ``PATH`` for the rest of this process."""
+    current = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{directory}{os.pathsep}{current}" if current else str(directory)
+
+
+def install_swegemma(paths: TrialPaths) -> bool:
+    """Phase 4: install the harness CLI from the local wheelhouse when absent.
+
+    Skips when ``swegemma`` is already on ``PATH``. uv installs the CLI as an
+    isolated tool; its bin directory is prepended to ``PATH`` so phase 7 can
+    invoke the ``swegemma`` executable directly.
+    """
+    phase("Phase 4/8 (runbook sec. 4.1): install swegemma from the local wheelhouse")
+    if shutil.which(SWEGEMMA_TOOL) is not None:
+        note(f"{SWEGEMMA_TOOL} already on PATH; skipping install")
+        return False
+
+    if not any(paths.wheelhouse_dir.glob("swegemma-*.whl")):
+        raise TrialError(
+            f"no swegemma wheel under {paths.wheelhouse_dir}; fetch the wheelhouse "
+            "first (runbook sec. 4.1)."
+        )
+
+    run_cmd(
+        build_swegemma_install_args(paths.wheelhouse_dir),
+        what="uv tool install swegemma",
+    )
+
+    bin_dir = uv_tool_bin_dir()
+    if bin_dir is not None:
+        _prepend_path(bin_dir)
+
+    found = shutil.which(SWEGEMMA_TOOL)
+    if found is None:
+        raise TrialError(
+            "swegemma was installed but is not on PATH; add the uv tool bin directory "
+            "(uv tool dir --bin) to PATH and re-run (runbook sec. 4.1)."
+        )
+    note(f"installed {SWEGEMMA_TOOL}: {found}")
+    return True
+
+
 def phase(title: str) -> None:
     """Print a phase banner."""
     print(f"\n=== {title} ===")
@@ -268,7 +344,7 @@ def extract_zips(directory: Path) -> None:
 
 def check_prerequisites() -> None:
     """Phase 1: require git/uv/docker/kaggle and a Linux Docker engine."""
-    phase("Phase 1/7 (runbook sec. 1): prerequisites")
+    phase("Phase 1/8 (runbook sec. 1): prerequisites")
     requirements = (
         ("git", "Install git first."),
         ("uv", "Install uv first: https://astral.sh/uv"),
@@ -301,7 +377,7 @@ def check_prerequisites() -> None:
 
 def ensure_harness_branch(repo_root: Path) -> None:
     """Phase 2: fetch origin and fall back to ``main`` when harness code is absent."""
-    phase("Phase 2/7 (runbook sec. 2): repository and harness branch")
+    phase("Phase 2/8 (runbook sec. 2): repository and harness branch")
     os.chdir(repo_root)
     run_cmd(["git", "fetch", "origin"])
 
@@ -350,7 +426,7 @@ def _fetch_competition_file(remote_file: str, dest_dir: Path) -> None:
 
 def fetch_data(paths: TrialPaths) -> None:
     """Phase 3: fetch the wheelhouse + small fixtures only (never bulk snapshots)."""
-    phase("Phase 3/7 (runbook sec. 4): fetch wheelhouse + small fixtures (NO bulk)")
+    phase("Phase 3/8 (runbook sec. 4): fetch wheelhouse + small fixtures (NO bulk)")
 
     if any(paths.wheelhouse_dir.glob("*.whl")):
         note("skip (exists): runtime wheelhouse already extracted")
@@ -384,8 +460,8 @@ def fetch_data(paths: TrialPaths) -> None:
 
 
 def build_image(paths: TrialPaths) -> None:
-    """Phase 4: build the sandbox image from the fetched Dockerfile."""
-    phase("Phase 4/7 (runbook sec. 3): build sandbox image")
+    """Phase 5: build the sandbox image from the fetched Dockerfile."""
+    phase("Phase 5/8 (runbook sec. 3): build sandbox image")
     dockerfile = paths.docker_context / "Dockerfile.sandbox"
     if not dockerfile.is_file():
         raise TrialError(f"missing {dockerfile} (fetched in phase 3).")
@@ -404,8 +480,8 @@ def build_image(paths: TrialPaths) -> None:
 
 
 def resolve_backend_env(env_file: Path, models_yaml: Path) -> dict[str, str]:
-    """Phase 5: load ``.env``/environment, abort if the key is empty, mask output."""
-    phase("Phase 5/7 (runbook sec. 5): backend key (environment only)")
+    """Phase 6: load ``.env``/environment, abort if the key is empty, mask output."""
+    phase("Phase 6/8 (runbook sec. 5): backend key (environment only)")
 
     resolved = resolve_trial_env(load_env_file(env_file), os.environ)
     if not resolved.get(OPENAI_API_KEY):
@@ -432,12 +508,12 @@ def resolve_backend_env(env_file: Path, models_yaml: Path) -> dict[str, str]:
 
 
 def run_eval(paths: TrialPaths) -> None:
-    """Phase 6: run ``swegemma eval`` for the two tasks."""
-    phase("Phase 6/7 (runbook sec. 6): swegemma eval (2 tasks, competition budgets)")
-    if shutil.which("swegemma") is None:
+    """Phase 7: run ``swegemma eval`` for the two tasks."""
+    phase("Phase 7/8 (runbook sec. 6): swegemma eval (2 tasks, competition budgets)")
+    if shutil.which(SWEGEMMA_TOOL) is None:
         raise TrialError(
-            "swegemma is not on PATH. Install it from the wheelhouse dataset "
-            "(runbook sec. 4.1; install command is an open TODO in the runbook)."
+            "swegemma is not on PATH; phase 4 installs it from the local wheelhouse "
+            "(runbook sec. 4.1)."
         )
     paths.results_dir.mkdir(parents=True, exist_ok=True)
     run_cmd(
@@ -453,8 +529,8 @@ def run_eval(paths: TrialPaths) -> None:
 
 
 def archive_and_report(paths: TrialPaths) -> Path:
-    """Phase 7: archive into ``runs/<UTC>/`` and print the report."""
-    phase("Phase 7/7 (runbook sec. 7-9): archive + report under runs/")
+    """Phase 8: archive into ``runs/<UTC>/`` and print the report."""
+    phase("Phase 8/8 (runbook sec. 7-9): archive + report under runs/")
     note("JUnit note (runbook sec. 8): the harness writes JUnit XML only inside Container B")
     note("at /tmp/_swegemma_junit_<id>.xml and warm-pooled containers are wiped. If a")
     note("container is still alive, copy it out before teardown:")
@@ -487,6 +563,7 @@ def run(repo_root: Path, results_name: str, env_file: Path) -> Path:
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
     fetch_data(paths)
+    install_swegemma(paths)
     build_image(paths)
     resolve_backend_env(env_file, paths.models_yaml)
     run_eval(paths)

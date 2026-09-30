@@ -13,8 +13,8 @@ to bash-style `head`/`tail`/`grep`.
 ## 0. Runner — `scripts/host-trial/run_host_trial.py`
 
 The runnable entry point is the single cross-platform Python runner (the former
-`run-host-trial.ps1` / `.sh` were removed). It walks the seven phases below
-(prereqs → data → image → key guard → `swegemma eval` → archive/report):
+`run-host-trial.ps1` / `.sh` were removed). It walks the eight phases below
+(prereqs → data → install → image → key guard → `swegemma eval` → archive/report):
 
 ```sh
 uv run python scripts/host-trial/run_host_trial.py run_01
@@ -144,6 +144,25 @@ kaggle datasets download -d metric/gemma-4-developer-agent-wheelhouse -p data\ra
 Expand-Archive -Path data\raw\wheelhouse\*.zip -DestinationPath data\raw\wheelhouse -Force
 ```
 
+#### Install `swegemma` from the wheelhouse
+
+None of the three harness distributions (`swegemma`, `adk-submission`,
+`adk-eval-core`) are on PyPI, so install the CLI with `--find-links` pointed at
+the extracted wheelhouse. Only **`swegemma`** ships the
+`swegemma = swegemma.cli:main` console entry point; the other two are pulled in
+as its dependencies from the same directory. Their public dependencies
+(e.g. `google-adk`, `transformers`) resolve normally.
+
+```powershell
+uv tool install --find-links data\raw\wheelhouse swegemma
+uv tool dir --bin   # the bin dir holding swegemma.exe; must be on PATH
+```
+
+The runner (section 0) runs this automatically as phase 4 and skips it when
+`swegemma` is already on `PATH`; it prepends `uv tool dir --bin` to `PATH` for
+the rest of the run. Run it by hand only if you invoke `swegemma eval` outside
+the runner.
+
 ### 4.2 `tasks.jsonl` + small fixtures — required
 
 ```powershell
@@ -252,6 +271,8 @@ swegemma eval `
 
 Notes:
 - `--sandbox docker` is the default; it requires the image from step 3.
+- `swegemma` must be on `PATH`; the runner installs it from the local wheelhouse
+  as phase 4 (§4.1) and skips the install when it is already there.
 - `--concurrency 1` keeps the trial cheap; bump only if you want the dashboard.
 - `TODO`: the exact `--models-yaml` path for a cloud backend is not documented
   in the repo. If the harness needs one, pass `--models-yaml <path>` mapping the
@@ -343,8 +364,6 @@ status need no manual transcription — they are already in `report.json`.
 ## Open TODOs (not verifiable from repo files)
 
 - Sandbox build context (§3).
-- The exact runtime install command from the wheelhouse dataset (the packages
-  are not on PyPI; the install invocation is not documented).
 - The backend key env-var name the harness reads (§5).
 - The `--models-yaml` path/shape for a cloud backend (§6).
 - Whether per-task snapshots are in scope (§4.3) and the Container B
