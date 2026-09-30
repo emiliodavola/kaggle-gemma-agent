@@ -86,9 +86,10 @@ git fetch origin
 git checkout exp/harness-trial-1
 ```
 
-`TODO`: the repo remote URL above is assumed from the merge commits seen in
-`main` history; confirm the exact clone URL. If `exp/harness-trial-1` has
-already merged to `main`, check first and use `main` instead:
+The remote URL was confirmed from `git remote get-url origin` on this repo
+(`https://github.com/emiliodavola/kaggle-gemma-agent.git`). If
+`exp/harness-trial-1` has already merged to `main`, check first and use `main`
+instead:
 
 ```powershell
 git show origin/main:docs/harness-logging-contract.md
@@ -296,7 +297,7 @@ Get-ChildItem results\run_01 -Recurse -File |
 
 ## Open TODOs (not verifiable from repo files)
 
-- Clone URL (§2) and sandbox build context (§3).
+- Sandbox build context (§3).
 - The exact runtime install command from the wheelhouse dataset (the packages
   are not on PyPI; the install invocation is not documented).
 - The backend key env-var name the harness reads (§5).
