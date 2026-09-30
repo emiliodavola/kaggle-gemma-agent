@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import http.server
 import importlib.util
 import os
 import sys
+import threading
+import urllib.request
 import zipfile
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -89,7 +93,185 @@ def test_resolve_backend_env_aborts_when_key_empty(
     monkeypatch.delenv(runner.OPENAI_API_KEY, raising=False)
 
     with pytest.raises(runner.TrialError):
-        runner.resolve_backend_env(tmp_path / "absent.env", tmp_path / "models.yaml")
+        runner.resolve_backend_env(tmp_path / "absent.env")
+
+
+def test_resolve_backend_env_masks_key_and_sets_default_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(runner.OPENAI_API_KEY, "super-secret-key")
+    monkeypatch.delenv(runner.OPENAI_BASE_URL, raising=False)
+    monkeypatch.delenv(runner.HARNESS_MODEL, raising=False)
+    monkeypatch.delenv(runner.SESSION_ENV, raising=False)
+
+    resolved = runner.resolve_backend_env(tmp_path / "absent.env")
+
+    assert resolved[runner.SESSION_ENV] == runner.DEFAULT_TRIAL_SESSION
+    assert resolved[runner.HARNESS_MODEL] == runner.DEFAULT_HARNESS_MODEL
+    assert os.environ[runner.OPENAI_API_KEY] == "super-secret-key"
+
+
+def test_provider_qualified_model_adds_prefix_once() -> None:
+    assert runner.provider_qualified_model("muse-spark-1.3-contributor") == (
+        "openai/muse-spark-1.3-contributor"
+    )
+    assert runner.provider_qualified_model("openai/already") == "openai/already"
+    assert runner.provider_qualified_model("hosted_vllm/x") == "hosted_vllm/x"
+
+
+def test_collect_declared_models_reads_agent_and_subagents(tmp_path: Path) -> None:
+    submission = tmp_path / "submission"
+    (submission / "sub_agents").mkdir(parents=True)
+    (submission / "configs").mkdir()
+    (submission / "agent.yaml").write_text(
+        "name: a\nmodel: gemma-4-31b-it-qat-w4a16-ct\n", encoding="utf-8"
+    )
+    (submission / "sub_agents" / "code_analyzer.yaml").write_text(
+        "name: b\nmodel: gemma-4-31b-it-qat-w4a16-ct\n", encoding="utf-8"
+    )
+    (submission / "sub_agents" / "other.yaml").write_text(
+        "name: c\nmodel: 'other-model'  # inline comment\n", encoding="utf-8"
+    )
+    (submission / "configs" / "sampling.yaml").write_text("temperature: 0.2\n", encoding="utf-8")
+
+    assert runner.collect_declared_models(submission) == [
+        "gemma-4-31b-it-qat-w4a16-ct",
+        "other-model",
+    ]
+
+
+def test_collect_declared_models_empty_when_none(tmp_path: Path) -> None:
+    submission = tmp_path / "submission"
+    submission.mkdir()
+    (submission / "agent.yaml").write_text("name: a\n", encoding="utf-8")
+
+    assert runner.collect_declared_models(submission) == []
+
+
+def test_render_models_yaml_maps_every_alias_to_harness_model() -> None:
+    text = runner.render_models_yaml(
+        ["gemma-4-31b-it-qat-w4a16-ct", "other"], "muse-spark-1.3-contributor"
+    )
+
+    assert "models:" in text
+    assert "  gemma-4-31b-it-qat-w4a16-ct:" in text
+    assert "  other:" in text
+    assert "    path: openai/muse-spark-1.3-contributor" in text
+    assert text.count("path: openai/muse-spark-1.3-contributor") == 2
+    assert "api_base" not in text
+    assert "api_key" not in text
+
+
+def test_write_models_yaml_creates_parents(tmp_path: Path) -> None:
+    target = tmp_path / "results" / "run_01" / runner.GENERATED_MODELS_FILENAME
+
+    written = runner.write_models_yaml(target, ["alias"], "deepseek-v4.1-flash")
+
+    assert written == target
+    assert target.read_text(encoding="utf-8") == runner.render_models_yaml(
+        ["alias"], "deepseek-v4.1-flash"
+    )
+
+
+def test_resolve_trial_session_prefers_env_then_file_then_default() -> None:
+    assert runner.resolve_trial_session({}, {}) == runner.DEFAULT_TRIAL_SESSION
+    assert runner.resolve_trial_session({"HARNESS_TRIAL_SESSION": "file"}, {}) == "file"
+    assert (
+        runner.resolve_trial_session(
+            {"HARNESS_TRIAL_SESSION": "file"}, {"HARNESS_TRIAL_SESSION": "env"}
+        )
+        == "env"
+    )
+
+
+def test_join_upstream_path_keeps_base_path_and_collapses_v1() -> None:
+    base = "/zen/go/v1"
+
+    assert runner.join_upstream_path(base, "/chat/completions") == ("/zen/go/v1/chat/completions")
+    assert runner.join_upstream_path(base, "/v1/chat/completions") == (
+        "/zen/go/v1/chat/completions"
+    )
+    assert runner.join_upstream_path(base, "/zen/go/v1/chat/completions") == (
+        "/zen/go/v1/chat/completions"
+    )
+    assert runner.join_upstream_path(base, "/chat/completions?x=1") == (
+        "/zen/go/v1/chat/completions?x=1"
+    )
+    assert runner.join_upstream_path("", "/chat/completions") == "/chat/completions"
+    assert runner.join_upstream_path("/v1", "/v1/chat/completions") == ("/v1/chat/completions")
+
+
+def test_paths_for_points_models_yaml_at_the_generated_file(tmp_path: Path) -> None:
+    paths = runner.paths_for(tmp_path, "run_02")
+
+    assert paths.models_yaml == (tmp_path / "results" / "run_02" / runner.GENERATED_MODELS_FILENAME)
+
+
+class _StubUpstream(http.server.BaseHTTPRequestHandler):
+    headers_seen: ClassVar[dict[str, str]] = {}
+    body_seen: ClassVar[bytes] = b""
+    path_seen: ClassVar[str] = ""
+
+    def log_message(self, format: str, *args: object) -> None:
+        """Silence per-request logging."""
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        type(self).body_seen = self.rfile.read(length)
+        type(self).headers_seen = {k.lower(): v for k, v in self.headers.items()}
+        type(self).path_seen = self.path
+        payload = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def test_header_injecting_proxy_forwards_and_stamps_session() -> None:
+    _StubUpstream.headers_seen = {}
+    _StubUpstream.body_seen = b""
+    _StubUpstream.path_seen = ""
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _StubUpstream)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    port = upstream.server_address[1]
+    proxy = runner.HeaderInjectingProxy(f"http://127.0.0.1:{port}/zen/go/v1", "sess-abc")
+    proxy.start()
+
+    try:
+        request = urllib.request.Request(
+            proxy.base_url + "/chat/completions",
+            data=b'{"model": "x"}',
+            headers={"Authorization": "Bearer test-key", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request) as response:
+            assert response.status == 200
+            assert response.read() == b'{"ok": true}'
+    finally:
+        proxy.stop()
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=5.0)
+
+    assert _StubUpstream.headers_seen["x-opencode-session"] == "sess-abc"
+    assert _StubUpstream.headers_seen["authorization"] == "Bearer test-key"
+    assert "host" in _StubUpstream.headers_seen
+    assert _StubUpstream.body_seen == b'{"model": "x"}'
+    assert _StubUpstream.path_seen == "/zen/go/v1/chat/completions"
+
+
+def test_header_injecting_proxy_rejects_bad_upstream() -> None:
+    with pytest.raises(runner.TrialError):
+        runner.HeaderInjectingProxy("ftp://nope", "s")
+
+
+def test_header_injecting_proxy_base_url_requires_start() -> None:
+    proxy = runner.HeaderInjectingProxy("https://example.test/v1", "s")
+
+    with pytest.raises(runner.TrialError):
+        _ = proxy.base_url
 
 
 def test_build_eval_args_matches_trial_contract() -> None:
