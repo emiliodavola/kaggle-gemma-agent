@@ -17,7 +17,7 @@ The runnable entry point is the single cross-platform Python runner (the former
 (prereqs → data → image → key guard → `swegemma eval` → archive/report):
 
 ```sh
-uv run python scripts/host-trial/run_host_trial.py --results-name run_01
+uv run python scripts/host-trial/run_host_trial.py run_01
 # ...or, without the repo venv:
 uv run --script scripts/host-trial/run_host_trial.py run_01
 ```
