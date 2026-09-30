@@ -243,9 +243,7 @@ def test_main_builds_archive(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "wrote" in capsys.readouterr().out
 
 
-def test_main_build_error_returns_one(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_main_build_error_returns_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     output = tmp_path / "submission.zip"
 
     assert pack.main([str(tmp_path / "nope"), "-o", str(output)]) == 1
