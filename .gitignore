@@ -249,3 +249,7 @@ node_modules/
 
 # Custom – OS
 .DS_Store
+
+# Custom – evidencias locales (runs y tmp, nunca commitear)
+/runs/
+/tmp/
