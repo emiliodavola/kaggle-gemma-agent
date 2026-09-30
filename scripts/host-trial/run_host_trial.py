@@ -375,6 +375,8 @@ def fetch_data(paths: TrialPaths) -> None:
     _fetch_competition_file("sandbox/setup.py", paths.data_raw / "sandbox")
     _fetch_competition_file("docker/Dockerfile.sandbox", paths.docker_context)
     _fetch_competition_file("docker/Dockerfile.public", paths.docker_context)
+    _fetch_competition_file("docker/imp.py", paths.docker_context)
+    _fetch_competition_file("docker/telnetlib.py", paths.docker_context)
 
     note("fetching only the two trial snapshots (never the whole snapshots/ tree)")
     _fetch_competition_file("snapshots/fastapi_15661.tgz", paths.snapshots_dir)

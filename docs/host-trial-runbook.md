@@ -152,7 +152,15 @@ kaggle competitions download -c gemma-4-developer-agent -f HARNESS_README.md -p 
 kaggle competitions download -c gemma-4-developer-agent -f sandbox/setup.py -p data\raw
 kaggle competitions download -c gemma-4-developer-agent -f docker/Dockerfile.sandbox -p data\raw
 kaggle competitions download -c gemma-4-developer-agent -f docker/Dockerfile.public -p data\raw
+kaggle competitions download -c gemma-4-developer-agent -f docker/imp.py -p data\raw
+kaggle competitions download -c gemma-4-developer-agent -f docker/telnetlib.py -p data\raw
 ```
+
+`Dockerfile.sandbox` `COPY`s `imp.py` and `telnetlib.py` from the
+`data\raw\docker` build context. Those stdlib modules were removed upstream
+(`imp` in 3.12, `telnetlib` in 3.13) and the `python:3.13-slim` base no longer
+ships them, so both shims (§3) are required fixtures or `docker build` fails
+with `"/imp.py": not found` / `"/telnetlib.py": not found`.
 
 `sample_submission/` (10 files, 0.42 MiB) is the schema reference — fetch it
 only if you want a submission dir to point `--submission-dir` at; the repo

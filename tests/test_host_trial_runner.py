@@ -135,6 +135,31 @@ def test_build_archive_and_report_args() -> None:
     assert report == [*runner.HARNESS_RUNS, "report", str(Path("runs/20260101T000000Z"))]
 
 
+def test_fetch_data_places_docker_shims_in_build_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheelhouse_dir.mkdir(parents=True)
+    (paths.wheelhouse_dir / "pkg.whl").write_text("wheel-bytes", encoding="utf-8")
+
+    fetched: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        runner,
+        "_fetch_competition_file",
+        lambda remote_file, dest_dir: fetched.append((remote_file, dest_dir)),
+    )
+
+    runner.fetch_data(paths)
+
+    docker_files = {remote for remote, dest in fetched if dest == paths.docker_context}
+    assert {
+        "docker/Dockerfile.sandbox",
+        "docker/Dockerfile.public",
+        "docker/imp.py",
+        "docker/telnetlib.py",
+    } <= docker_files
+
+
 def test_extract_zips_unpacks_archives_in_place(tmp_path: Path) -> None:
     archive = tmp_path / "payload.zip"
     with zipfile.ZipFile(archive, "w") as zf:
