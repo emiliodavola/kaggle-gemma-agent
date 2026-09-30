@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -168,3 +169,83 @@ def test_extract_zips_unpacks_archives_in_place(tmp_path: Path) -> None:
     runner.extract_zips(tmp_path)
 
     assert (tmp_path / "pkg" / "thing.whl").read_text(encoding="utf-8") == "wheel-bytes"
+
+
+def test_build_swegemma_install_args_points_uv_at_the_local_wheelhouse() -> None:
+    args = runner.build_swegemma_install_args(Path("data/raw/wheelhouse"))
+
+    assert args == [
+        "uv",
+        "tool",
+        "install",
+        "--find-links",
+        str(Path("data/raw/wheelhouse")),
+        runner.SWEGEMMA_TOOL,
+    ]
+
+
+def test_install_swegemma_skips_when_already_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/usr/bin/swegemma")
+    called: list[list[str]] = []
+    monkeypatch.setattr(runner, "run_cmd", lambda cmd, *, what=None: called.append(list(cmd)))
+
+    assert runner.install_swegemma(paths) is False
+    assert called == []
+
+
+def test_install_swegemma_requires_the_wheelhouse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheelhouse_dir.mkdir(parents=True)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
+
+    with pytest.raises(runner.TrialError):
+        runner.install_swegemma(paths)
+
+
+def test_install_swegemma_installs_and_prepends_the_tool_bin_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheelhouse_dir.mkdir(parents=True)
+    (paths.wheelhouse_dir / "swegemma-0.2.7-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+
+    bin_dir = tmp_path / "toolbin"
+    bin_dir.mkdir()
+    which_result: dict[str, str | None] = {"value": None}
+    monkeypatch.setattr(runner.shutil, "which", lambda name: which_result["value"])
+    monkeypatch.setattr(runner, "uv_tool_bin_dir", lambda: bin_dir)
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    called: list[tuple[list[str], str | None]] = []
+
+    def fake_run_cmd(cmd: list[str], *, what: str | None = None) -> None:
+        called.append((list(cmd), what))
+        which_result["value"] = str(bin_dir / "swegemma")
+
+    monkeypatch.setattr(runner, "run_cmd", fake_run_cmd)
+
+    assert runner.install_swegemma(paths) is True
+    assert called == [
+        (runner.build_swegemma_install_args(paths.wheelhouse_dir), "uv tool install swegemma")
+    ]
+    assert os.environ["PATH"].startswith(str(bin_dir) + os.pathsep)
+
+
+def test_install_swegemma_errors_when_binary_missing_after_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheelhouse_dir.mkdir(parents=True)
+    (paths.wheelhouse_dir / "swegemma-0.2.7-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
+    monkeypatch.setattr(runner, "uv_tool_bin_dir", lambda: None)
+    monkeypatch.setattr(runner, "run_cmd", lambda cmd, *, what=None: None)
+
+    with pytest.raises(runner.TrialError):
+        runner.install_swegemma(paths)
