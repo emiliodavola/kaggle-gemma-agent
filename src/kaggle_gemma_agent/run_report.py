@@ -670,9 +670,9 @@ def build_report(
 def render_summary(report: Mapping[str, Any]) -> str:
     """Render the ``STATUS`` text: status token plus a five-line summary."""
     env = report.get("env", {})
-    totals = report.get("totals", {})
-    budgets = report.get("budgets", DEFAULT_BUDGETS)
-    tasks = totals.get("tasks", 0)
+    totals: Mapping[str, Any] = report.get("totals", {})
+    budgets: Mapping[str, int] = report.get("budgets", DEFAULT_BUDGETS)
+    tasks = _coerce_int(totals.get("tasks", 0)) or 0
     rate = totals.get("resolution_rate")
     rate_text = f"{rate:.3f}" if isinstance(rate, (int, float)) else "n/a"
 

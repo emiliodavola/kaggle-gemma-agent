@@ -169,7 +169,7 @@ def archive_run(
                 size = _copy(junit_src, task_dir / "junit.xml")
                 if size is not None:
                     artifacts["junit.xml"] = size
-        task_meta = {"instance_id": instance_id, "artifacts": artifacts}
+        task_meta: dict[str, object] = {"instance_id": instance_id, "artifacts": artifacts}
         (task_dir / "metadata.json").write_text(
             json.dumps(task_meta, indent=2) + "\n", encoding="utf-8"
         )
