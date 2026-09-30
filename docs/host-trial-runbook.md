@@ -274,26 +274,37 @@ from `docker ps` (or `docker ps -a` during the run). If the container is already
 torn down, the XML is unrecoverable — pass/fail can still be read from
 `task_results.jsonl`.
 
-## 9. Report-back checklist (paste into the Kaggle chat)
+## 9. Report back through `runs/` (no chat paste)
 
-After the run, collect and post:
+Do **not** paste logs into chat. Finalize the run into the shared-folder
+handoff and stop; Hermes reads `runs/` directly. The protocol, schema, and
+scale caps live in **`docs/run-reports.md`**.
 
-1. **Backend** — which endpoint/model was used (never the key).
-2. **Wall time** — agent-loop minutes per task vs the 60-minute budget
-   (`summary.json` / `task_results.jsonl`).
-3. **Tool calls** — per task vs the 100-call budget
-   (`task_results.jsonl`).
-4. **Pass/fail** — resolved count and Resolution Rate (`summary.json`).
-5. **Log paths + sizes** — list the artifacts so we know exactly what was
-   captured:
+1. **Archive + report** (extract JUnit XML first, per §8; skip if the
+   container is already gone):
 
 ```powershell
-Get-ChildItem results\run_01 -Recurse -File |
-  Select-Object FullName, Length |
-  Sort-Object FullName
+uv run python -m kaggle_gemma_agent.harness_runs archive results\run_01 `
+    --junit-dir junit --tasks data\raw\tasks.jsonl --backend <model-name>
 ```
 
-6. **JUnit** — whether step 8 succeeded (XML copied) or the container was gone.
+2. **Confirm the rollup** — the same six lines Hermes will read:
+
+```powershell
+uv run python -m kaggle_gemma_agent.harness_runs report runs\<UTC>
+```
+
+`runs\<UTC>\STATUS` is the polling signal: `DONE`, `BLOCKED`, or `PARTIAL`,
+followed by a five-line summary (backend; tasks/resolved/rate; tool calls,
+wall time, and turns against budget; failures; report/index paths).
+`runs\<UTC>\report.json` carries the per-task records (tool calls vs 100,
+turns, pass/fail, JUnit `FAIL_TO_PASS`/`PASS_TO_PASS`, patch `sha256`, and
+every artifact's path/size/hash). `runs/index.jsonl` gets one line per
+finished run. `runs/` is git-ignored — never commit it.
+
+If you post anything at all, post the `STATUS` block plus the `runs\<UTC>`
+path. Backend, wall time, tool calls, pass/fail, log paths/sizes, and JUnit
+status need no manual transcription — they are already in `report.json`.
 
 ## Open TODOs (not verifiable from repo files)
 
