@@ -122,6 +122,9 @@ Load a skill only when the task genuinely matches its trigger.
   `main`).
 - PR descriptions must include **real command outputs** for verification, not
   claims.
+- PR bodies must follow `.github/PULL_REQUEST_TEMPLATE.md` (Summary, Changes,
+  Verification with pasted output, Files changed, Design artifacts,
+  Checklist) — no free-form bodies.
 - **Emilio merges.** Do not merge your own PR.
 - Never push to `main`.
 - Do not add AI attribution / `Co-Authored-By` trailers; use conventional
