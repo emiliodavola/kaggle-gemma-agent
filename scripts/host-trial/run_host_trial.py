@@ -747,8 +747,19 @@ def _fetch_competition_file(remote_file: str, dest_dir: Path) -> None:
     )
 
 
-def fetch_data(paths: TrialPaths) -> None:
-    """Phase 3: fetch the wheelhouse + small fixtures only (never bulk snapshots)."""
+def snapshot_remote_files(task_ids: Sequence[str]) -> list[str]:
+    """Return the ``snapshots/<id>.tgz`` remote paths derived from *task_ids*."""
+    return [f"snapshots/{task_id}.tgz" for task_id in task_ids]
+
+
+def fetch_data(paths: TrialPaths, task_ids: Sequence[str] | None = None) -> None:
+    """Phase 3: fetch the wheelhouse, small fixtures, and the resolved snapshots.
+
+    Snapshots are derived from the resolved task ids (``HARNESS_TRIAL_TASKS`` or
+    the default ``TASK_IDS``): one ``snapshots/<id>.tgz`` per id, never the whole
+    ``snapshots/`` tree. When *task_ids* is omitted it is resolved from the
+    process environment, falling back to the default task set.
+    """
     phase("Phase 3/8 (runbook sec. 4): fetch wheelhouse + small fixtures (NO bulk)")
 
     if any(paths.wheelhouse_dir.glob("*.whl")):
@@ -777,9 +788,13 @@ def fetch_data(paths: TrialPaths) -> None:
     _fetch_competition_file("docker/imp.py", paths.docker_context)
     _fetch_competition_file("docker/telnetlib.py", paths.docker_context)
 
-    note("fetching only the two trial snapshots (never the whole snapshots/ tree)")
-    _fetch_competition_file("snapshots/fastapi_15661.tgz", paths.snapshots_dir)
-    _fetch_competition_file("snapshots/fastapi_15588.tgz", paths.snapshots_dir)
+    resolved_tasks = (
+        tuple(task_ids) if task_ids is not None else resolve_trial_tasks({}, os.environ)
+    )
+    snapshots = snapshot_remote_files(resolved_tasks)
+    note(f"fetching {len(snapshots)} trial snapshot(s) (never the whole snapshots/ tree)")
+    for remote_file in snapshots:
+        _fetch_competition_file(remote_file, paths.snapshots_dir)
 
 
 def _list_competition_wheels() -> list[str]:
@@ -981,7 +996,8 @@ def run(repo_root: Path, results_name: str, env_file: Path) -> Path:
     paths = paths_for(repo_root, results_name)
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
-    fetch_data(paths)
+    task_ids = resolve_trial_tasks(load_env_file(env_file), os.environ)
+    fetch_data(paths, task_ids)
     ensure_trial_wheels(paths)
     install_swegemma(paths)
     build_image(paths)
