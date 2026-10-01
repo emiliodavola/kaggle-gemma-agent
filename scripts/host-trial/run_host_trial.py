@@ -51,9 +51,10 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from email.message import Message
 from pathlib import Path
@@ -66,6 +67,10 @@ WHEELHOUSE_DATASET = "metric/gemma-4-developer-agent-wheelhouse"
 WHEELS_DIRNAME = "wheels/"
 LIST_PAGE_SIZE = 200
 PAGE_TOKEN_MARKER = "Next Page Token ="
+WHEEL_DOWNLOAD_ATTEMPTS = 5
+WHEEL_DOWNLOAD_BACKOFF_SECONDS = 2.0
+WHEEL_DOWNLOAD_PAUSE_SECONDS = 1.5
+RATE_LIMIT_MARKERS: tuple[str, ...] = ("429", "too many requests", "rate limit")
 TASK_IDS: tuple[str, ...] = ("fastapi_15661", "fastapi_15588")
 BACKEND_ALIAS = "deepseek-trial"
 SWEGEMMA_TOOL = "swegemma"
@@ -636,6 +641,45 @@ def run_cmd(cmd: Sequence[str], *, what: str | None = None) -> None:
         raise TrialError(f"{label} failed (exit {result.returncode})")
 
 
+def _looks_rate_limited(detail: str) -> bool:
+    """Return whether *detail* (CLI stderr/stdout) signals a transient rate limit."""
+    lowered = detail.lower()
+    return any(marker in lowered for marker in RATE_LIMIT_MARKERS)
+
+
+def run_cmd_with_retry(
+    cmd: Sequence[str],
+    *,
+    what: str | None = None,
+    attempts: int = WHEEL_DOWNLOAD_ATTEMPTS,
+    base_delay: float = WHEEL_DOWNLOAD_BACKOFF_SECONDS,
+    sleep: Callable[[float], None] | None = None,
+) -> None:
+    """Echo and run *cmd*, retrying a rate-limited (``429``) failure with backoff.
+
+    Output is captured so a rate-limit marker can be detected. A non-zero exit
+    that is not a rate limit, or that survives *attempts* tries, raises
+    :class:`TrialError` with the captured output. *sleep* is injectable for tests.
+    """
+    label = what or cmd[0]
+    sleeper = sleep or time.sleep
+    print("  $ " + " ".join(cmd))
+    attempt = 0
+    while True:
+        attempt += 1
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            if result.stdout:
+                print(result.stdout, end="")
+            return
+        detail = (result.stderr or result.stdout or "").strip()
+        if attempt >= attempts or not _looks_rate_limited(detail):
+            raise TrialError(f"{label} failed (exit {result.returncode}): {detail}")
+        delay = base_delay * (2 ** (attempt - 1))
+        note(f"{label} rate limited (attempt {attempt}/{attempts}); retrying in {delay:.1f}s")
+        sleeper(delay)
+
+
 def _docker_ostype() -> str:
     """Return ``docker info --format {{.OSType}}`` output, or ``""`` on failure."""
     result = subprocess.run(
@@ -724,14 +768,22 @@ def ensure_harness_branch(repo_root: Path) -> None:
 
 
 def _fetch_competition_file(remote_file: str, dest_dir: Path) -> None:
-    """Download one competition file unless it is already present."""
+    """Download one competition file unless a complete copy is already present.
+
+    A zero-byte file counts as an aborted download (for example a ``429`` that
+    killed the CLI mid-write): it is removed and fetched again instead of being
+    skipped forever. Rate-limited failures are retried with backoff.
+    """
     name = Path(remote_file).name
     dest = dest_dir / name
-    if dest.is_file():
+    if dest.is_file() and dest.stat().st_size > 0:
         note(f"skip (exists): {dest}")
         return
+    if dest.exists():
+        note(f"refetch (empty/incomplete): {dest}")
+        dest.unlink()
     dest_dir.mkdir(parents=True, exist_ok=True)
-    run_cmd(
+    run_cmd_with_retry(
         [
             "kaggle",
             "competitions",
@@ -837,20 +889,30 @@ def _list_competition_wheels() -> list[str]:
     return remote
 
 
+def _staged_wheel_names(wheels_dir: Path) -> set[str]:
+    """Return valid local wheel basenames, ignoring zero-byte partials."""
+    return {
+        wheel.name
+        for wheel in Path(wheels_dir).glob("*.whl")
+        if wheel.is_file() and wheel.stat().st_size > 0
+    }
+
+
 def ensure_trial_wheels(paths: TrialPaths) -> None:
     """Phase 3b/8: stage the competition's ``wheels/`` deps into ``data/raw/wheels/``.
 
     ``swegemma`` resolves the task dependency wheels from the directory next to
     ``tasks.jsonl`` (``resolve_wheels_dir`` in ``swegemma.harness.container_setup``
     checks ``<tasks_path parent>/wheels``), so staging them here is what lets the
-    air-gapped sandbox bootstrap install the task test dependencies. Skips when a
-    wheel is already present; otherwise lists the remote ``wheels/`` prefix and
-    downloads each file.
+    air-gapped sandbox bootstrap install the task test dependencies.
+
+    The remote ``wheels/`` listing is always consulted and only the missing
+    wheels are downloaded, so a run interrupted by a ``429`` (leaving a partial
+    set on disk) resumes on the next run instead of being skipped forever by a
+    ``any(*.whl)`` early return. The phase is only skipped when every remote
+    wheel is already staged and non-empty.
     """
     phase("Phase 3b/8: ensure trial dependency wheels (data/raw/wheels/)")
-    if any(paths.wheels_dir.glob("*.whl")):
-        note("skip (exists): trial wheels already present")
-        return
 
     remote_wheels = _list_competition_wheels()
     if not remote_wheels:
@@ -858,10 +920,22 @@ def ensure_trial_wheels(paths: TrialPaths) -> None:
             f"no files under '{WHEELS_DIRNAME}' in competition {COMPETITION}; "
             "cannot stage the trial dependency wheels."
         )
-    note(f"staging {len(remote_wheels)} wheel(s) into {paths.wheels_dir}")
+
+    staged = _staged_wheel_names(paths.wheels_dir)
+    missing = [remote for remote in remote_wheels if Path(remote).name not in staged]
+    if not missing:
+        note(f"skip (complete): {len(remote_wheels)} wheel(s) already staged in {paths.wheels_dir}")
+        return
+
+    note(
+        f"staging {len(missing)}/{len(remote_wheels)} wheel(s) into {paths.wheels_dir} "
+        f"({len(remote_wheels) - len(missing)} already present)"
+    )
     paths.wheels_dir.mkdir(parents=True, exist_ok=True)
-    for remote_file in remote_wheels:
+    for index, remote_file in enumerate(missing):
         _fetch_competition_file(remote_file, paths.wheels_dir)
+        if index < len(missing) - 1:
+            time.sleep(WHEEL_DOWNLOAD_PAUSE_SECONDS)
 
 
 def build_image(paths: TrialPaths) -> None:

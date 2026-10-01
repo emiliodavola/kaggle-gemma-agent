@@ -14,23 +14,30 @@ Decisiones tomadas con el usuario:
 
 ## Non-goals
 
-- Mergear sin orden de Emilio (rama local pendiente de decision: PR o drop).
+- Mergear o pushear sin orden de Emilio.
 
 ## Tasks
 
-- [x] T1 — `run_cmd_with_retry` (hasta 5 intentos, backoff exponencial,
-      honra `Retry-After`) en `run_host_trial.py`.
+- [x] T1 — `run_cmd_with_retry` (hasta 5 intentos, backoff exponencial)
+      en `run_host_trial.py`; reintenta solo fallos con marcador de rate
+      limit (`429` / `too many requests` / `rate limit`), el resto corta al
+      primer intento.
 - [x] T2 — Pausa de 1.5 s entre descargas sucesivas de wheels.
 - [x] T3 — Resume por faltantes (remoto menos validos locales); `.whl` de
-      0 bytes se trata como faltante. Reemplaza el skip temprano con `any()`
-      que dejaba sets parciales para siempre.
-- [x] T4 — 6 tests nuevos + 2 adaptados (mock `subprocess`/`time.sleep`,
-      sin red).
-- [x] T5 — `ruff check` + `pytest -q` en verde (105 passed).
-- [ ] T6 — Decision pendiente: abrir PR o borrar rama
-      `fix/host-trial-wheels-backoff` (commit `1149276`).
+      0 bytes se trata como faltante (`_staged_wheel_names`). Reemplaza el
+      skip temprano con `any()` que dejaba sets parciales para siempre.
+- [x] T4 — 8 tests nuevos + 1 skip-test reemplazado (mock
+      `subprocess`/`time.sleep`, sin red).
+- [x] T5 — `ruff check` + `pytest -q` en verde (116 passed).
+- [x] T6 — Reimplementado en rama nueva `fix/host-trial-wheels-partial-resume`
+      (la rama `fix/host-trial-wheels-backoff` fue podada; no se recupera).
+      Sin push/PR hasta que Emilio lo pida.
 
 ## Evidence
 
-- Rama local: `fix/host-trial-wheels-backoff` (sin push).
-- Verificado por Robotina: ruff limpio, 105/105 pytest.
+- Rama local nueva: `fix/host-trial-wheels-partial-resume` (sin push).
+- `uv run ruff check scripts/host-trial/run_host_trial.py src/ tests/` limpio.
+- `uv run pytest tests/ -q` = 116 passed.
+- Diagnostico remoto (obtenido antes de la restriccion de red): el prefijo
+  `wheels/` tiene 124 wheels, 56 de ellas `starlette-*.whl`, y
+  `_list_competition_wheels()` las devuelve todas; el remoto no es la causa.
