@@ -303,17 +303,60 @@ def test_list_competition_wheels_raises_on_cli_failure(
         runner._list_competition_wheels()
 
 
-def test_ensure_trial_wheels_skips_when_a_wheel_exists(
+def _record_fetches(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
+    fetched: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        runner,
+        "_fetch_competition_file",
+        lambda remote_file, dest_dir: fetched.append((remote_file, dest_dir)),
+    )
+    return fetched
+
+
+def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    sleeps: list[float] = []
+    monkeypatch.setattr(runner.time, "sleep", sleeps.append)
+    return sleeps
+
+
+def test_ensure_trial_wheels_resumes_missing_wheels_instead_of_skipping_phase(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = runner.paths_for(tmp_path, "run_01")
     paths.wheels_dir.mkdir(parents=True)
-    (paths.wheels_dir / "pkg.whl").write_text("wheel-bytes", encoding="utf-8")
-    monkeypatch.setattr(
-        runner, "_list_competition_wheels", lambda: pytest.fail("must not list remote files")
-    )
+    (paths.wheels_dir / "a.whl").write_text("wheel-bytes", encoding="utf-8")
+    listed: list[bool] = []
+
+    def fake_list() -> list[str]:
+        listed.append(True)
+        return ["wheels/a.whl", "wheels/b.whl"]
+
+    monkeypatch.setattr(runner, "_list_competition_wheels", fake_list)
+    fetched = _record_fetches(monkeypatch)
+    _no_sleep(monkeypatch)
 
     runner.ensure_trial_wheels(paths)
+
+    assert listed == [True]
+    assert fetched == [("wheels/b.whl", paths.wheels_dir)]
+
+
+def test_ensure_trial_wheels_refetches_a_zero_byte_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    (paths.wheels_dir / "a.whl").write_text("wheel-bytes", encoding="utf-8")
+    (paths.wheels_dir / "b.whl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        runner, "_list_competition_wheels", lambda: ["wheels/a.whl", "wheels/b.whl"]
+    )
+    fetched = _record_fetches(monkeypatch)
+    _no_sleep(monkeypatch)
+
+    runner.ensure_trial_wheels(paths)
+
+    assert fetched == [("wheels/b.whl", paths.wheels_dir)]
 
 
 def test_ensure_trial_wheels_downloads_into_the_wheels_dir(
@@ -323,12 +366,8 @@ def test_ensure_trial_wheels_downloads_into_the_wheels_dir(
     monkeypatch.setattr(
         runner, "_list_competition_wheels", lambda: ["wheels/a.whl", "wheels/b.whl"]
     )
-    fetched: list[tuple[str, Path]] = []
-    monkeypatch.setattr(
-        runner,
-        "_fetch_competition_file",
-        lambda remote_file, dest_dir: fetched.append((remote_file, dest_dir)),
-    )
+    fetched = _record_fetches(monkeypatch)
+    sleeps = _no_sleep(monkeypatch)
 
     runner.ensure_trial_wheels(paths)
 
@@ -336,6 +375,24 @@ def test_ensure_trial_wheels_downloads_into_the_wheels_dir(
         ("wheels/a.whl", paths.wheels_dir),
         ("wheels/b.whl", paths.wheels_dir),
     ]
+    assert sleeps == [runner.WHEEL_DOWNLOAD_PAUSE_SECONDS]
+
+
+def test_ensure_trial_wheels_skips_only_when_every_wheel_is_staged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    (paths.wheels_dir / "a.whl").write_text("wheel-bytes", encoding="utf-8")
+    (paths.wheels_dir / "b.whl").write_text("wheel-bytes", encoding="utf-8")
+    monkeypatch.setattr(
+        runner, "_list_competition_wheels", lambda: ["wheels/a.whl", "wheels/b.whl"]
+    )
+    monkeypatch.setattr(
+        runner, "_fetch_competition_file", lambda remote_file, dest_dir: pytest.fail("no fetch")
+    )
+
+    runner.ensure_trial_wheels(paths)
 
 
 def test_ensure_trial_wheels_errors_when_remote_is_empty(
@@ -346,6 +403,81 @@ def test_ensure_trial_wheels_errors_when_remote_is_empty(
 
     with pytest.raises(runner.TrialError):
         runner.ensure_trial_wheels(paths)
+
+
+def test_fetch_competition_file_skips_a_complete_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a.whl").write_text("wheel-bytes", encoding="utf-8")
+    monkeypatch.setattr(
+        runner, "run_cmd_with_retry", lambda cmd, *, what=None: pytest.fail("no fetch")
+    )
+
+    runner._fetch_competition_file("wheels/a.whl", tmp_path)
+
+
+def test_fetch_competition_file_refetches_a_zero_byte_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a.whl").write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        runner, "run_cmd_with_retry", lambda cmd, *, what=None: calls.append(list(cmd))
+    )
+
+    runner._fetch_competition_file("wheels/a.whl", tmp_path)
+
+    assert calls and calls[0][calls[0].index("-f") + 1] == "wheels/a.whl"
+    assert not (tmp_path / "a.whl").exists()
+
+
+def _completed(returncode: int, *, stdout: str = "", stderr: str = "") -> Any:
+    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
+
+
+def test_run_cmd_with_retry_retries_rate_limit_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            _completed(1, stderr="429 Too Many Requests"),
+            _completed(0, stdout="downloaded\n"),
+        ]
+    )
+    monkeypatch.setattr(runner.subprocess, "run", lambda cmd, **kwargs: next(responses))
+    sleeps = _no_sleep(monkeypatch)
+
+    runner.run_cmd_with_retry(["kaggle", "download", "x"], attempts=3)
+
+    assert sleeps == [runner.WHEEL_DOWNLOAD_BACKOFF_SECONDS]
+
+
+def test_run_cmd_with_retry_does_not_retry_a_non_rate_limit_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner.subprocess, "run", lambda cmd, **kwargs: _completed(1, stderr="404 Not Found")
+    )
+    sleeps = _no_sleep(monkeypatch)
+
+    with pytest.raises(runner.TrialError):
+        runner.run_cmd_with_retry(["kaggle", "download", "x"], attempts=3)
+
+    assert sleeps == []
+
+
+def test_run_cmd_with_retry_exhausts_attempts_with_exponential_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner.subprocess, "run", lambda cmd, **kwargs: _completed(1, stderr="429 rate limit")
+    )
+    sleeps = _no_sleep(monkeypatch)
+
+    with pytest.raises(runner.TrialError):
+        runner.run_cmd_with_retry(["kaggle", "download", "x"], attempts=3)
+
+    assert sleeps == [2.0, 4.0]
 
 
 class _StubUpstream(http.server.BaseHTTPRequestHandler):
