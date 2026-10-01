@@ -6,9 +6,11 @@
 """Single cross-platform runner for the host ``swegemma`` trial.
 
 Port of the former ``run-host-trial.sh`` / ``run-host-trial.ps1`` (PR #15):
-the same eight phases, two tasks (``fastapi_15661``, ``fastapi_15588``) against
-an OpenAI-compatible cloud backend, archived under ``runs/``. Stdlib only, so
-it runs on Windows and Linux either as a uv script::
+the same eight phases, by default two tasks (``fastapi_15661``,
+``fastapi_15588``) against an OpenAI-compatible cloud backend, archived under
+``runs/``. Set ``HARNESS_TRIAL_TASKS`` (comma-separated instance ids) to
+override the default task set. Stdlib only, so it runs on Windows and Linux
+either as a uv script::
 
     uv run --script scripts/host-trial/run_host_trial.py --results-name run_01
 
@@ -72,6 +74,7 @@ OPENAI_API_KEY = "OPENAI_API_KEY"
 OPENAI_BASE_URL = "OPENAI_BASE_URL"
 HARNESS_MODEL = "HARNESS_MODEL"
 SESSION_ENV = "HARNESS_TRIAL_SESSION"
+TASKS_ENV = "HARNESS_TRIAL_TASKS"
 ENV_KEYS: tuple[str, ...] = (OPENAI_API_KEY, OPENAI_BASE_URL, HARNESS_MODEL)
 ENV_MAX_LINES = 20
 
@@ -279,6 +282,31 @@ def resolve_trial_session(
     return environ.get(SESSION_ENV) or env_file_values.get(SESSION_ENV) or DEFAULT_TRIAL_SESSION
 
 
+def parse_trial_tasks(
+    raw: str,
+    *,
+    default: tuple[str, ...] = TASK_IDS,
+) -> tuple[str, ...]:
+    """Parse a comma-separated instance-id list, falling back to *default*.
+
+    Entries are stripped and blank entries dropped, so ``" a , ,b "`` becomes
+    ``("a", "b")``. An empty or all-blank *raw* yields *default*.
+    """
+    task_ids = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return task_ids or default
+
+
+def resolve_trial_tasks(
+    env_file_values: Mapping[str, str],
+    environ: Mapping[str, str],
+    *,
+    default: tuple[str, ...] = TASK_IDS,
+) -> tuple[str, ...]:
+    """Resolve the trial task ids (real env wins over ``.env``, then *default*)."""
+    raw = environ.get(TASKS_ENV) or env_file_values.get(TASKS_ENV) or ""
+    return parse_trial_tasks(raw, default=default)
+
+
 def join_upstream_path(base_path: str, request_target: str) -> str:
     """Join an upstream base path with a client request target (``path?query``).
 
@@ -460,7 +488,7 @@ def build_eval_args(
     models_yaml: Path,
     task_ids: Sequence[str] = TASK_IDS,
 ) -> list[str]:
-    """Build the ``swegemma eval`` argv for the two-task trial."""
+    """Build the ``swegemma eval`` argv for the resolved trial task ids."""
     return [
         "swegemma",
         "eval",
@@ -719,8 +747,19 @@ def _fetch_competition_file(remote_file: str, dest_dir: Path) -> None:
     )
 
 
-def fetch_data(paths: TrialPaths) -> None:
-    """Phase 3: fetch the wheelhouse + small fixtures only (never bulk snapshots)."""
+def snapshot_remote_files(task_ids: Sequence[str]) -> list[str]:
+    """Return the ``snapshots/<id>.tgz`` remote paths derived from *task_ids*."""
+    return [f"snapshots/{task_id}.tgz" for task_id in task_ids]
+
+
+def fetch_data(paths: TrialPaths, task_ids: Sequence[str] | None = None) -> None:
+    """Phase 3: fetch the wheelhouse, small fixtures, and the resolved snapshots.
+
+    Snapshots are derived from the resolved task ids (``HARNESS_TRIAL_TASKS`` or
+    the default ``TASK_IDS``): one ``snapshots/<id>.tgz`` per id, never the whole
+    ``snapshots/`` tree. When *task_ids* is omitted it is resolved from the
+    process environment, falling back to the default task set.
+    """
     phase("Phase 3/8 (runbook sec. 4): fetch wheelhouse + small fixtures (NO bulk)")
 
     if any(paths.wheelhouse_dir.glob("*.whl")):
@@ -749,9 +788,13 @@ def fetch_data(paths: TrialPaths) -> None:
     _fetch_competition_file("docker/imp.py", paths.docker_context)
     _fetch_competition_file("docker/telnetlib.py", paths.docker_context)
 
-    note("fetching only the two trial snapshots (never the whole snapshots/ tree)")
-    _fetch_competition_file("snapshots/fastapi_15661.tgz", paths.snapshots_dir)
-    _fetch_competition_file("snapshots/fastapi_15588.tgz", paths.snapshots_dir)
+    resolved_tasks = (
+        tuple(task_ids) if task_ids is not None else resolve_trial_tasks({}, os.environ)
+    )
+    snapshots = snapshot_remote_files(resolved_tasks)
+    note(f"fetching {len(snapshots)} trial snapshot(s) (never the whole snapshots/ tree)")
+    for remote_file in snapshots:
+        _fetch_competition_file(remote_file, paths.snapshots_dir)
 
 
 def _list_competition_wheels() -> list[str]:
@@ -853,6 +896,8 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
             "before running; never pass it as an argument (runbook sec. 5)."
         )
     resolved[SESSION_ENV] = resolve_trial_session(file_values, os.environ)
+    task_ids = resolve_trial_tasks(file_values, os.environ)
+    resolved[TASKS_ENV] = ",".join(task_ids)
 
     for name, value in resolved.items():
         if value:
@@ -864,12 +909,13 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
     )
     note(f"{HARNESS_MODEL}: {resolved[HARNESS_MODEL]} (trial-only; not part of the submission)")
     note(f"trial session: {resolved[SESSION_ENV]} -> {OPENCODE_SESSION_HEADER} header")
+    note(f"trial tasks: {', '.join(task_ids)}")
     return resolved
 
 
 def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
     """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``."""
-    phase("Phase 7/8 (runbook sec. 6): swegemma eval (2 tasks, competition budgets)")
+    phase("Phase 7/8 (runbook sec. 6): swegemma eval (trial tasks, competition budgets)")
     note(f"task wheels: {paths.wheels_dir} (auto-discovered via the tasks directory)")
     if shutil.which(SWEGEMMA_TOOL) is None:
         raise TrialError(
@@ -897,6 +943,7 @@ def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
     os.environ[OPENAI_BASE_URL] = proxy.base_url
 
     paths.results_dir.mkdir(parents=True, exist_ok=True)
+    task_ids = parse_trial_tasks(env.get(TASKS_ENV, ""))
     try:
         run_cmd(
             build_eval_args(
@@ -905,6 +952,7 @@ def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
                 submission_dir=paths.submission_dir,
                 results_dir=paths.results_dir,
                 models_yaml=paths.models_yaml,
+                task_ids=task_ids,
             ),
             what="swegemma eval",
         )
@@ -948,7 +996,8 @@ def run(repo_root: Path, results_name: str, env_file: Path) -> Path:
     paths = paths_for(repo_root, results_name)
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
-    fetch_data(paths)
+    task_ids = resolve_trial_tasks(load_env_file(env_file), os.environ)
+    fetch_data(paths, task_ids)
     ensure_trial_wheels(paths)
     install_swegemma(paths)
     build_image(paths)

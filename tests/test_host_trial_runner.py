@@ -11,7 +11,7 @@ import threading
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -183,6 +183,51 @@ def test_resolve_trial_session_prefers_env_then_file_then_default() -> None:
         )
         == "env"
     )
+
+
+def test_resolve_trial_tasks_defaults_without_env() -> None:
+    assert runner.resolve_trial_tasks({}, {}) == runner.TASK_IDS
+
+
+def test_resolve_trial_tasks_env_overrides_file() -> None:
+    assert runner.resolve_trial_tasks(
+        {"HARNESS_TRIAL_TASKS": "file_task"}, {"HARNESS_TRIAL_TASKS": "env_task"}
+    ) == ("env_task",)
+
+
+def test_resolve_trial_tasks_reads_env_file() -> None:
+    assert runner.resolve_trial_tasks({"HARNESS_TRIAL_TASKS": "a,b"}, {}) == ("a", "b")
+
+
+def test_resolve_trial_tasks_supports_one_and_many_ids() -> None:
+    assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": "fastapi_15661"}) == (
+        "fastapi_15661",
+    )
+    assert runner.resolve_trial_tasks(
+        {}, {"HARNESS_TRIAL_TASKS": "fastapi_15661,fastapi_15588,extra"}
+    ) == ("fastapi_15661", "fastapi_15588", "extra")
+
+
+def test_resolve_trial_tasks_trims_spaces_and_drops_blanks() -> None:
+    assert runner.resolve_trial_tasks(
+        {}, {"HARNESS_TRIAL_TASKS": "  fastapi_15661 , , fastapi_15588  "}
+    ) == ("fastapi_15661", "fastapi_15588")
+
+
+def test_resolve_trial_tasks_blank_falls_back_to_default() -> None:
+    assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": "   "}) == runner.TASK_IDS
+    assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": ""}) == runner.TASK_IDS
+
+
+def test_resolve_backend_env_records_resolved_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(runner.OPENAI_API_KEY, "super-secret-key")
+    monkeypatch.setenv(runner.TASKS_ENV, " fastapi_15661 , fastapi_15588 ")
+
+    resolved = runner.resolve_backend_env(tmp_path / "absent.env")
+
+    assert resolved[runner.TASKS_ENV] == "fastapi_15661,fastapi_15588"
 
 
 def test_join_upstream_path_keeps_base_path_and_collapses_v1() -> None:
@@ -437,6 +482,99 @@ def test_fetch_data_places_docker_shims_in_build_context(
         "docker/imp.py",
         "docker/telnetlib.py",
     } <= docker_files
+
+
+def _seed_wheelhouse(paths: Any) -> None:
+    """Pre-create a wheel so ``fetch_data`` skips the wheelhouse download."""
+    paths.wheelhouse_dir.mkdir(parents=True)
+    (paths.wheelhouse_dir / "pkg.whl").write_text("wheel-bytes", encoding="utf-8")
+
+
+def _snapshot_downloads(calls: list[list[str]]) -> list[str]:
+    """Return the ``snapshots/`` ``-f`` targets of every recorded kaggle download."""
+    return [
+        cmd[cmd.index("-f") + 1]
+        for cmd in calls
+        if cmd[:3] == ["kaggle", "competitions", "download"]
+        and cmd[cmd.index("-f") + 1].startswith("snapshots/")
+    ]
+
+
+def _record_runs(monkeypatch: pytest.MonkeyPatch, calls: list[list[str]]) -> None:
+    """Replace ``subprocess.run`` with a recorder returning a zero exit code."""
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        capture_output: bool = True,
+        text: bool = True,
+        check: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+
+def test_snapshot_remote_files_derives_one_path_per_id() -> None:
+    assert runner.snapshot_remote_files(()) == []
+    assert runner.snapshot_remote_files(("a", "b")) == [
+        "snapshots/a.tgz",
+        "snapshots/b.tgz",
+    ]
+
+
+def test_fetch_data_defaults_to_the_two_trial_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    _seed_wheelhouse(paths)
+    monkeypatch.delenv(runner.TASKS_ENV, raising=False)
+    calls: list[list[str]] = []
+    _record_runs(monkeypatch, calls)
+
+    runner.fetch_data(paths)
+
+    assert _snapshot_downloads(calls) == [f"snapshots/{task_id}.tgz" for task_id in runner.TASK_IDS]
+    assert {
+        cmd[cmd.index("-p") + 1]
+        for cmd in calls
+        if cmd[:3] == ["kaggle", "competitions", "download"]
+        and cmd[cmd.index("-f") + 1].startswith("snapshots/")
+    } == {str(paths.snapshots_dir)}
+
+
+def test_fetch_data_downloads_n_snapshots_for_n_env_task_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    _seed_wheelhouse(paths)
+    monkeypatch.setenv(runner.TASKS_ENV, "fastapi_16000, fastapi_16001, fastapi_16002")
+    calls: list[list[str]] = []
+    _record_runs(monkeypatch, calls)
+
+    runner.fetch_data(paths)
+
+    assert _snapshot_downloads(calls) == [
+        "snapshots/fastapi_16000.tgz",
+        "snapshots/fastapi_16001.tgz",
+        "snapshots/fastapi_16002.tgz",
+    ]
+
+
+def test_fetch_data_skips_snapshots_already_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    _seed_wheelhouse(paths)
+    paths.snapshots_dir.mkdir(parents=True)
+    (paths.snapshots_dir / "fastapi_16000.tgz").write_bytes(b"cached")
+    calls: list[list[str]] = []
+    _record_runs(monkeypatch, calls)
+
+    runner.fetch_data(paths, task_ids=("fastapi_16000", "fastapi_16001"))
+
+    assert _snapshot_downloads(calls) == ["snapshots/fastapi_16001.tgz"]
 
 
 def test_extract_zips_unpacks_archives_in_place(tmp_path: Path) -> None:
