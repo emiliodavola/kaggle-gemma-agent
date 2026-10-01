@@ -127,6 +127,15 @@ Load a skill only when the task genuinely matches its trigger.
 - Do not add AI attribution / `Co-Authored-By` trailers; use conventional
   commit messages.
 
+## Tracker
+
+- `odd/tasks/*.md` is the per-feature tracker (one file per feature/finding).
+- Every feature branch that changes behavior must add or update its task file:
+  goal, decisions taken with the user, non-goals, checkboxed tasks, evidence
+  (commands, PR links, measured outputs — never claims).
+- Findings that affect future work (bad tasks, infra gaps, open debt) go in a
+  `*-collect-and-open-items.md` file instead of living only in chat.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every push to `main` and every PR targeting
