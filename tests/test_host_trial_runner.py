@@ -185,6 +185,51 @@ def test_resolve_trial_session_prefers_env_then_file_then_default() -> None:
     )
 
 
+def test_resolve_trial_tasks_defaults_without_env() -> None:
+    assert runner.resolve_trial_tasks({}, {}) == runner.TASK_IDS
+
+
+def test_resolve_trial_tasks_env_overrides_file() -> None:
+    assert runner.resolve_trial_tasks(
+        {"HARNESS_TRIAL_TASKS": "file_task"}, {"HARNESS_TRIAL_TASKS": "env_task"}
+    ) == ("env_task",)
+
+
+def test_resolve_trial_tasks_reads_env_file() -> None:
+    assert runner.resolve_trial_tasks({"HARNESS_TRIAL_TASKS": "a,b"}, {}) == ("a", "b")
+
+
+def test_resolve_trial_tasks_supports_one_and_many_ids() -> None:
+    assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": "fastapi_15661"}) == (
+        "fastapi_15661",
+    )
+    assert runner.resolve_trial_tasks(
+        {}, {"HARNESS_TRIAL_TASKS": "fastapi_15661,fastapi_15588,extra"}
+    ) == ("fastapi_15661", "fastapi_15588", "extra")
+
+
+def test_resolve_trial_tasks_trims_spaces_and_drops_blanks() -> None:
+    assert runner.resolve_trial_tasks(
+        {}, {"HARNESS_TRIAL_TASKS": "  fastapi_15661 , , fastapi_15588  "}
+    ) == ("fastapi_15661", "fastapi_15588")
+
+
+def test_resolve_trial_tasks_blank_falls_back_to_default() -> None:
+    assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": "   "}) == runner.TASK_IDS
+    assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": ""}) == runner.TASK_IDS
+
+
+def test_resolve_backend_env_records_resolved_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(runner.OPENAI_API_KEY, "super-secret-key")
+    monkeypatch.setenv(runner.TASKS_ENV, " fastapi_15661 , fastapi_15588 ")
+
+    resolved = runner.resolve_backend_env(tmp_path / "absent.env")
+
+    assert resolved[runner.TASKS_ENV] == "fastapi_15661,fastapi_15588"
+
+
 def test_join_upstream_path_keeps_base_path_and_collapses_v1() -> None:
     base = "/zen/go/v1"
 
