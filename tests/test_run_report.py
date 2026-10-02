@@ -537,3 +537,70 @@ def test_budgets_override_is_respected(tmp_path: Path) -> None:
     task_a: Mapping[str, object] = report["tasks"][0]
     assert task_a["tool_calls_budget"] == 50
     assert report["budgets"]["time_minutes"] == 30
+
+
+# --------------------------------------------------------------------------- #
+# environment_blocked (issue #39)
+# --------------------------------------------------------------------------- #
+def _make_run_with_missing(root: Path, modules_by_task: dict[str, str | None]) -> Path:
+    """Build a run whose tasks fail with optional ``No module named`` logs."""
+    run_dir = root / "runs" / "20260101T000000Z"
+    run_dir.mkdir(parents=True)
+    lines: list[str] = []
+    for instance_id, module in modules_by_task.items():
+        task_dir = run_dir / instance_id
+        task_dir.mkdir()
+        if module is not None:
+            (task_dir / "test_output.log").write_text(
+                "ERROR collecting tests/test_x.py\n"
+                f"E   ModuleNotFoundError: No module named '{module}'\n",
+                encoding="utf-8",
+            )
+        lines.append(json.dumps({"instance_id": instance_id, "resolved": False}))
+    (run_dir / "summary.json").write_text(
+        json.dumps({"resolved": 0, "total": len(modules_by_task), "errors": []}),
+        encoding="utf-8",
+    )
+    (run_dir / "task_results.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return run_dir
+
+
+def test_build_report_flags_environment_blocked_for_a_shared_missing_module(
+    tmp_path: Path,
+) -> None:
+    run_dir = _make_run_with_missing(
+        tmp_path, {"a__1": "typing_inspection", "b__2": "typing_inspection"}
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["environment_blocked"] is True
+    assert report["missing_modules"] == ["typing_inspection"]
+    assert any(
+        "environment failure: missing module(s) typing_inspection" in reason
+        for reason in report["status_reasons"]
+    )
+    assert report["status"] == run_report.STATUS_PARTIAL
+
+    text = run_report.render_summary(report)
+    assert "env missing: typing_inspection" in text
+    assert len(text.strip().splitlines()) == 6
+
+
+def test_build_report_does_not_flag_a_single_missing_module(tmp_path: Path) -> None:
+    run_dir = _make_run_with_missing(tmp_path, {"a__1": "typing_inspection", "b__2": None})
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["environment_blocked"] is False
+    assert report["missing_modules"] == ["typing_inspection"]
+    assert not any("environment failure" in reason for reason in report["status_reasons"])
+
+
+def test_build_report_does_not_flag_distinct_missing_modules(tmp_path: Path) -> None:
+    run_dir = _make_run_with_missing(tmp_path, {"a__1": "typing_inspection", "b__2": "other_dep"})
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["environment_blocked"] is False
+    assert report["missing_modules"] == ["other_dep", "typing_inspection"]

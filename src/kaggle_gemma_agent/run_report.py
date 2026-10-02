@@ -108,6 +108,7 @@ _FTP_KEYS = ("fail_to_pass", "FAIL_TO_PASS", "fail_to_pass_tests")
 _PTP_KEYS = ("pass_to_pass", "PASS_TO_PASS", "pass_to_pass_tests")
 
 _ADDED_TEST_RE = re.compile(r"^\+\s*(?:async\s+)?def\s+(test_[A-Za-z0-9_]+)\s*\(")
+_MISSING_MODULE_RE = re.compile(r"No module named ['\"](?P<module>[A-Za-z_][\w.]*)['\"]")
 
 
 class RunReportError(Exception):
@@ -561,6 +562,20 @@ def _failure_tail(task_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def _missing_modules(task_dir: Path, status: str) -> list[str]:
+    """Return unique ``No module named '...'`` modules from a failing test log.
+
+    Reads the ``test_output.log`` tail only; a passing task or a task without a
+    test log yields an empty list. The result is sorted for deterministic output.
+    """
+    if status == "pass":
+        return []
+    text, _ = _read_tail(task_dir / "test_output.log", FAILURE_TAIL_CHARS)
+    if not text:
+        return []
+    return sorted({match.group("module") for match in _MISSING_MODULE_RE.finditer(text)})
+
+
 def _build_task(
     run_dir: Path,
     task_dir: Path,
@@ -605,6 +620,7 @@ def _build_task(
         else (f"{instance_id}/agent_patch.diff" if patch_path.is_file() else None),
         "artifacts": _artifact_index(task_dir, run_dir),
         "failure_kind": failure_kind,
+        "missing_modules": _missing_modules(task_dir, status),
         "failure_tail": _failure_tail(task_dir) if status != "pass" else None,
     }
 
@@ -675,6 +691,22 @@ def build_report(
             reasons.append(f"{len(summary_errors)} harness error(s)")
     if unknown:
         reasons.append(f"{unknown} task(s) without verdict")
+
+    module_tasks: dict[str, int] = {}
+    for task in tasks:
+        if task.get("status") == "pass":
+            continue
+        for module in task.get("missing_modules", []):
+            module_tasks[module] = module_tasks.get(module, 0) + 1
+    missing_modules = sorted(module_tasks)
+    environment_blocked = False
+    for module, count in sorted(module_tasks.items()):
+        if count >= 2:
+            environment_blocked = True
+            reasons.append(
+                f"environment failure: missing module(s) {module} ({count}/{len(tasks)} tasks)"
+            )
+
     status = STATUS_BLOCKED if not tasks else (STATUS_PARTIAL if reasons else STATUS_DONE)
 
     return {
@@ -683,6 +715,8 @@ def build_report(
         "generated_at": generated_at or datetime.now(UTC).isoformat(),
         "status": status,
         "status_reasons": reasons,
+        "environment_blocked": environment_blocked,
+        "missing_modules": missing_modules,
         "env": env,
         "budgets": dict(budget_map),
         "totals": {
@@ -740,6 +774,10 @@ def render_summary(report: Mapping[str, Any]) -> str:
     if kinds:
         kind_pairs = " ".join(f"{kind}={count}" for kind, count in sorted(kinds.items()))
         kind_text = f" | kinds {kind_pairs}"
+    env_text = ""
+    if report.get("environment_blocked"):
+        env_names = ", ".join(str(name) for name in report.get("missing_modules", []))
+        env_text = f" | env missing: {env_names}"
 
     lines = [
         str(report.get("status", STATUS_BLOCKED)),
@@ -750,7 +788,7 @@ def render_summary(report: Mapping[str, Any]) -> str:
         f"tool_calls {tool_calls}/{_budget_total('tool_calls')} "
         f"| wall {wall_text}/{_budget_total('time_minutes')} min "
         f"| turns {turns}/{_budget_total('turns')}",
-        f"failures {len(failed)}{kind_text} | top: {top}",
+        f"failures {len(failed)}{kind_text}{env_text} | top: {top}",
         f"schema {report.get('schema_version', SCHEMA_VERSION)} "
         f"| report {report.get('report_path', REPORT_FILE)} "
         f"| index {report.get('index_path', INDEX_FILE)}",
