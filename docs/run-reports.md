@@ -84,6 +84,7 @@ Top-level keys:
 | `patch_path` | `str \| null` | Run-relative path to the patch. |
 | `artifacts` | `object` | `run-relative path → {size, sha256}` for **every** task file. |
 | `failure_tail` | `object \| null` | `{source, chars, truncated, text}` for non-passing tasks. |
+| `failure_kind` | `str \| null` | Coarse cause from `test_output.log`: `collection_error` / `test_failure` / `timeout` / `unknown`; `null` when the task passed or has no test log. |
 
 `fail_to_pass` / `pass_to_pass` are always present when `junit.xml` exists.
 Expected nodes come from (in order): the result line's `FAIL_TO_PASS` /
@@ -107,6 +108,11 @@ tool_calls 37/100 | wall 13.5/60 min | turns 14/500
 failures 0 | top: none
 schema 1.0 | report runs/20260930T120000Z/report.json | index runs/index.jsonl
 ```
+
+When at least one task failed, the `failures` line also carries the coarse
+causes, e.g. `failures 2 | kinds collection_error=2 | top: fastapi_15588, ...`.
+That distinguishes an environment/collection failure from an assertion failure
+without opening `failure_tail`; the per-task value is `failure_kind` above.
 
 Status selection:
 

@@ -303,6 +303,45 @@ def test_build_report_truncates_failure_tail(
     assert task_b["failure_tail"]["chars"] == 10
 
 
+def test_classify_failure_variants() -> None:
+    assert run_report._classify_failure("") is None
+    assert run_report._classify_failure("1 passed\n") == "unknown"
+
+    collection = (
+        "ERROR collecting tests/test_sse.py\n"
+        "ImportError while importing test module '/workspace/tests/test_sse.py'.\n"
+        "E   ModuleNotFoundError: No module named 'starlette'\n"
+        "!!!! Interrupted: 1 error during collection !!!!\n"
+    )
+    assert run_report._classify_failure(collection) == "collection_error"
+    assert (
+        run_report._classify_failure("===== FAILURES =====\nFAILED tests/t.py::test_a\n")
+        == "test_failure"
+    )
+    assert run_report._classify_failure("pytest-timeout: timed out after 300s\n") == "timeout"
+
+
+def test_build_report_classifies_collection_error(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "b__2" / "test_output.log").write_text(
+        "ERROR collecting tests/test_sse.py\n"
+        "E   ModuleNotFoundError: No module named 'starlette'\n"
+        "!!!! Interrupted: 1 error during collection !!!!\n",
+        encoding="utf-8",
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    task_a = next(task for task in report["tasks"] if task["instance_id"] == "a__1")
+    task_b = next(task for task in report["tasks"] if task["instance_id"] == "b__2")
+
+    assert task_a["failure_kind"] is None
+    assert task_b["failure_kind"] == "collection_error"
+
+    text = run_report.render_summary(report)
+    assert "failures 1" in text
+    assert "kinds collection_error=1" in text
+
+
 def test_build_report_missing_dir_raises(tmp_path: Path) -> None:
     with pytest.raises(run_report.RunReportError):
         run_report.build_report(tmp_path / "nope")

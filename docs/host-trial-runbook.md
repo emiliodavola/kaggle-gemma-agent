@@ -305,6 +305,78 @@ Notes:
 > runs host-side; Container A is `network_mode='none'` with no env
 > pass-through), so a host-local proxy is sufficient.
 
+### 6.1 Backend: local OpenAI-compatible server (Docker Model Runner / llama.cpp / LM Studio)
+
+The runner starts a host-local forwarding proxy and points `OPENAI_BASE_URL` at
+it (section 0), so the upstream may be **any** OpenAI-compatible `http(s)` origin:
+the `x-opencode-session` header it adds is ignored by local servers. The LLM
+calls originate in the host `swegemma` process, so a server on the Windows host is
+reachable even though Container A is `network_mode='none'`.
+
+`.env` for a local backend:
+
+```dotenv
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_API_KEY=sk-local-not-used
+HARNESS_MODEL=<exact model id the server exposes>
+```
+
+- **Docker Model Runner** is the option that runs the competition checkpoint:
+  `google/gemma-4-31B-it-qat-w4a16-ct` is **safetensors** (weight-only INT4 QAT),
+  and DMR serves it through its vLLM backend. Enable Docker Desktop → Settings →
+  AI → *host-side TCP support* on port `12434` (standalone Docker Engine has it on
+  by default), then:
+
+  ```bash
+  docker model run --detach hf.co/google/gemma-4-31B-it-qat-w4a16-ct
+  docker model list                 # exact model id for HARNESS_MODEL
+  curl -s http://localhost:12434/models
+  ```
+
+  The model manifest reports `format: safetensors`; the registered id is e.g.
+  `huggingface.co/google/gemma-4-31b-it-qat-w4a16-ct:latest`. Use the id the
+  OpenAI API expects, confirmed by
+  `curl -s http://localhost:12434/engines/vllm/v1/models`.
+
+  The OpenAI base URL is per-engine:
+
+  ```dotenv
+  OPENAI_BASE_URL=http://localhost:12434/engines/vllm/v1   # safetensors (this model)
+  # OPENAI_BASE_URL=http://localhost:12434/engines/llama.cpp/v1   # GGUF
+  ```
+
+  If the trial runs **inside a container** instead of the host, use
+  `http://model-runner.docker.internal/engines/vllm/v1` and make sure that
+  container can reach it (Robotina's internal network cannot, by design).
+- **LM Studio / llama.cpp** are GGUF-only, so they cannot load this safetensors
+  checkpoint; they remain useful for a GGUF substitute. LM Studio: enable the
+  local server (default `http://127.0.0.1:1234/v1`) and copy the model id shown
+  in the UI. llama.cpp: `llama-server -m <gguf> --port 8080 --jinja` exposes
+  `http://127.0.0.1:8080/v1`; `--jinja` is required for OpenAI tool calling.
+- `OPENAI_API_KEY` must be non-empty (the runner aborts otherwise); local servers
+  ignore its value.
+- The model must support **OpenAI function/tool calling** — the agent executes
+  tools; a non-tool chat model will loop and fail regardless of the harness.
+
+This is a trial-only knob: the submission still declares the competition model in
+`agent.yaml`; `HARNESS_MODEL` never ships.
+
+Before the eval, the runner probes the backend once through the same proxy with a
+minimal tool-aware chat completion and fails fast on an unreachable endpoint, an
+HTTP error, or an unusable reply — so a misconfigured local backend (server
+stopped, wrong model id, model without tool calling) is caught in seconds instead
+of after a full run. `--skip-backend-smoke` skips that single probe.
+
+### 6.2 Wheel-set integrity and the swegemma cache
+
+The runner clears `swegemma`'s cached unpacked-wheel tars
+(`<temp>/swegemma_sp_cache_*`) before phase 7 so they are rebuilt from the
+current `data/raw/wheels/` set. If the remote wheel listing is unavailable and
+the local set is unverified, phase 3b/8 fails fast; pass
+`--allow-partial-wheels` only for a deliberate offline run, and expect that an
+incomplete set can produce containers missing `starlette`/`pydantic` and score
+0/2 with a `collection_error` (see `docs/run-reports.md`).
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
