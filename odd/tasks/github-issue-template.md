@@ -27,6 +27,9 @@ Decisiones tomadas con el usuario:
 - [x] T3 — Reescribir #25, #26, #27, #28 con el formato del template.
 - [x] T4 — `odd/tasks/github-issue-template.md` (este archivo).
 - [x] T5 — Commit en rama `chore/github-issue-template` + PR asignado.
+- [x] T6 — `AGENTS.md`: seccion "Issue and PR templates (mandatory)" que
+      obliga a usar `.github/ISSUE_TEMPLATE/task.yml` y
+      `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ## Evidence
 
