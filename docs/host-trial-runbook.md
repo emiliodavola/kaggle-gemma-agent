@@ -305,6 +305,44 @@ Notes:
 > runs host-side; Container A is `network_mode='none'` with no env
 > pass-through), so a host-local proxy is sufficient.
 
+### 6.1 Backend: local OpenAI-compatible server (llama.cpp / LM Studio)
+
+The runner starts a host-local forwarding proxy and points `OPENAI_BASE_URL` at
+it (section 0), so the upstream may be **any** OpenAI-compatible `http(s)` origin:
+the `x-opencode-session` header it adds is ignored by local servers. The LLM
+calls originate in the host `swegemma` process, so a server on the Windows host is
+reachable even though Container A is `network_mode='none'`.
+
+`.env` for a local backend:
+
+```dotenv
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_API_KEY=sk-local-not-used
+HARNESS_MODEL=<exact model id the server exposes>
+```
+
+- LM Studio: enable the local server (default `http://127.0.0.1:1234/v1`) and
+  copy the model identifier shown in the UI.
+- llama.cpp: `llama-server -m <gguf> --port 8080 --jinja` exposes
+  `http://127.0.0.1:8080/v1`; `--jinja` is required for OpenAI tool calling.
+- `OPENAI_API_KEY` must be non-empty (the runner aborts otherwise); local servers
+  ignore its value.
+- The model must support **OpenAI function/tool calling** — the agent executes
+  tools; a non-tool chat model will loop and fail regardless of the harness.
+
+This is a trial-only knob: the submission still declares the competition model in
+`agent.yaml`; `HARNESS_MODEL` never ships.
+
+### 6.2 Wheel-set integrity and the swegemma cache
+
+The runner clears `swegemma`'s cached unpacked-wheel tars
+(`<temp>/swegemma_sp_cache_*`) before phase 7 so they are rebuilt from the
+current `data/raw/wheels/` set. If the remote wheel listing is unavailable and
+the local set is unverified, phase 3b/8 fails fast; pass
+`--allow-partial-wheels` only for a deliberate offline run, and expect that an
+incomplete set can produce containers missing `starlette`/`pydantic` and score
+0/2 with a `collection_error` (see `docs/run-reports.md`).
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):

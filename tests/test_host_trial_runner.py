@@ -378,7 +378,7 @@ def test_ensure_trial_wheels_downloads_into_the_wheels_dir(
     assert sleeps == [runner.WHEEL_DOWNLOAD_PAUSE_SECONDS]
 
 
-def test_ensure_trial_wheels_continues_with_local_set_when_listing_unavailable(
+def test_ensure_trial_wheels_fails_fast_when_listing_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = runner.paths_for(tmp_path, "run_01")
@@ -393,7 +393,46 @@ def test_ensure_trial_wheels_continues_with_local_set_when_listing_unavailable(
         runner, "_fetch_competition_file", lambda *args, **kwargs: pytest.fail("no fetch")
     )
 
-    runner.ensure_trial_wheels(paths)
+    with pytest.raises(runner.TrialError, match="cannot verify the local wheel set"):
+        runner.ensure_trial_wheels(paths)
+
+
+def test_ensure_trial_wheels_allows_partial_on_offline_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    (paths.wheels_dir / "a.whl").write_text("wheel-bytes", encoding="utf-8")
+
+    def failing_list() -> list[str]:
+        raise runner.TrialError("offline")
+
+    monkeypatch.setattr(runner, "_list_competition_wheels", failing_list)
+    monkeypatch.setattr(
+        runner, "_fetch_competition_file", lambda *args, **kwargs: pytest.fail("no fetch")
+    )
+
+    runner.ensure_trial_wheels(paths, allow_partial=True)
+
+
+def test_clear_swegemma_site_packages_cache_removes_matching_dirs(tmp_path: Path) -> None:
+    cache_root = tmp_path / "temp"
+    cache_root.mkdir()
+    stale = cache_root / f"{runner.SWEGEMMA_SP_CACHE_PREFIX}v8"
+    (stale / "sp_base").mkdir(parents=True)
+    (stale / "sp_base" / "starlette.py").write_text("x", encoding="utf-8")
+    keep = cache_root / "other_cache"
+    keep.mkdir()
+
+    removed = runner.clear_swegemma_site_packages_cache(cache_root)
+
+    assert removed == [stale.name]
+    assert not stale.exists()
+    assert keep.exists()
+
+
+def test_clear_swegemma_site_packages_cache_missing_root_is_noop(tmp_path: Path) -> None:
+    assert runner.clear_swegemma_site_packages_cache(tmp_path / "nope") == []
 
 
 def test_ensure_trial_wheels_propagates_listing_failure_without_local_wheels(

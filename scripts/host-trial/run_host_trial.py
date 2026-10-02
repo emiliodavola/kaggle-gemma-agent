@@ -50,6 +50,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -74,6 +75,10 @@ RATE_LIMIT_MARKERS: tuple[str, ...] = ("too many requests", "rate limit", "429 c
 TASK_IDS: tuple[str, ...] = ("fastapi_15661", "fastapi_15588")
 BACKEND_ALIAS = "deepseek-trial"
 SWEGEMMA_TOOL = "swegemma"
+#: swegemma caches unpacked wheels as ``<temp>/swegemma_sp_cache_v<N>/sp_base.tar``
+#: keyed by name only (no wheel-set hash), so a tar built from a partial wheel set
+#: poisons every later run. The runner clears matching dirs before each eval.
+SWEGEMMA_SP_CACHE_PREFIX = "swegemma_sp_cache_"
 
 OPENAI_API_KEY = "OPENAI_API_KEY"
 OPENAI_BASE_URL = "OPENAI_BASE_URL"
@@ -912,7 +917,34 @@ def _staged_wheel_names(wheels_dir: Path) -> set[str]:
     }
 
 
-def ensure_trial_wheels(paths: TrialPaths, *, sleep: Callable[[float], None] | None = None) -> None:
+def clear_swegemma_site_packages_cache(temp_root: Path | None = None) -> list[str]:
+    """Remove swegemma's cached unpacked-wheel tars so they rebuild from the current set.
+
+    swegemma keys the cache only by name (``swegemma_sp_cache_<N>``), not by the
+    wheel set, so a tar built while the wheel directory was partial (an
+    interrupted/429 staging run) is reused by every later run and silently
+    produces containers without the repo's dependencies. Returns the removed
+    directory names for logging; a missing cache or a removal error is ignored.
+    """
+    root = Path(temp_root) if temp_root is not None else Path(tempfile.gettempdir())
+    removed: list[str] = []
+    if not root.is_dir():
+        return removed
+    for cache_dir in sorted(root.glob(f"{SWEGEMMA_SP_CACHE_PREFIX}*")):
+        if not cache_dir.is_dir():
+            continue
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        if not cache_dir.exists():
+            removed.append(cache_dir.name)
+    return removed
+
+
+def ensure_trial_wheels(
+    paths: TrialPaths,
+    *,
+    sleep: Callable[[float], None] | None = None,
+    allow_partial: bool = False,
+) -> None:
     """Phase 3b/8: stage the competition's ``wheels/`` deps into ``data/raw/wheels/``.
 
     ``swegemma`` resolves the task dependency wheels from the directory next to
@@ -925,8 +957,9 @@ def ensure_trial_wheels(paths: TrialPaths, *, sleep: Callable[[float], None] | N
     a ``429`` (leaving a partial set on disk) resumes on the next run instead of
     being skipped forever by a ``any(*.whl)`` early return. When the listing is
     unavailable (offline host or rate-limited listing) but some wheels are
-    already staged, the phase continues with the local set and warns instead of
-    aborting, so an air-gapped re-run still works. A listing that succeeds but is
+    already staged, the phase **fails fast** unless *allow_partial* is set: an
+    unverified/partial set can poison the swegemma site-packages cache and score
+    0/2 with a container missing its dependencies. A listing that succeeds but is
     empty is still an error: it means the competition has no ``wheels/`` to
     stage. *sleep* is injectable for tests.
     """
@@ -937,12 +970,21 @@ def ensure_trial_wheels(paths: TrialPaths, *, sleep: Callable[[float], None] | N
     try:
         remote_wheels = _list_competition_wheels()
     except TrialError as exc:
-        if staged:
+        if staged and allow_partial:
             note(
                 f"warning: could not list remote wheels ({exc}); continuing with "
-                f"{len(staged)} staged wheel(s) in {paths.wheels_dir}"
+                f"{len(staged)} staged wheel(s) in {paths.wheels_dir} "
+                "(--allow-partial-wheels)"
             )
             return
+        if staged:
+            raise TrialError(
+                f"cannot verify the local wheel set ({len(staged)} staged in "
+                f"{paths.wheels_dir}): the competition wheel listing failed ({exc}). "
+                "Re-run when the listing is reachable, or pass --allow-partial-wheels "
+                "to proceed with the unverified set (an incomplete set can poison the "
+                "swegemma site-packages cache)."
+            ) from exc
         raise
 
     if not remote_wheels:
@@ -1020,6 +1062,11 @@ def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
     """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``."""
     phase("Phase 7/8 (runbook sec. 6): swegemma eval (trial tasks, competition budgets)")
     note(f"task wheels: {paths.wheels_dir} (auto-discovered via the tasks directory)")
+    removed = clear_swegemma_site_packages_cache()
+    if removed:
+        note(f"cleared stale swegemma site-packages cache: {', '.join(removed)}")
+    else:
+        note("no stale swegemma site-packages cache to clear")
     if shutil.which(SWEGEMMA_TOOL) is None:
         raise TrialError(
             "swegemma is not on PATH; phase 4 installs it from the local wheelhouse "
@@ -1094,14 +1141,20 @@ def archive_and_report(paths: TrialPaths, backend: str) -> Path:
     return latest
 
 
-def run(repo_root: Path, results_name: str, env_file: Path) -> Path:
+def run(
+    repo_root: Path,
+    results_name: str,
+    env_file: Path,
+    *,
+    allow_partial_wheels: bool = False,
+) -> Path:
     """Execute all eight trial phases and return the archived run directory."""
     paths = paths_for(repo_root, results_name)
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
     task_ids = resolve_trial_tasks(load_env_file(env_file), os.environ)
     fetch_data(paths, task_ids)
-    ensure_trial_wheels(paths)
+    ensure_trial_wheels(paths, allow_partial=allow_partial_wheels)
     install_swegemma(paths)
     build_image(paths)
     env = resolve_backend_env(env_file)
@@ -1127,12 +1180,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="path to the .env file (default: <repo root>/.env)",
     )
+    parser.add_argument(
+        "--allow-partial-wheels",
+        action="store_true",
+        help=(
+            "proceed when the competition wheel listing is unavailable even though "
+            "the local set is unverified (may poison the swegemma site-packages cache)"
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = REPO_ROOT
     env_file = args.env_file if args.env_file is not None else repo_root / ".env"
     try:
-        run_dir = run(repo_root, args.results_name, env_file)
+        run_dir = run(
+            repo_root,
+            args.results_name,
+            env_file,
+            allow_partial_wheels=args.allow_partial_wheels,
+        )
     except TrialError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
