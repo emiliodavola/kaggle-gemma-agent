@@ -41,6 +41,11 @@ evaluation scripts).
   - `uv sync` — create/refresh `.venv` from the lockfile.
   - `uv add <pkg>` — add a dependency (updates `pyproject.toml` + `uv.lock`).
   - `uv run <cmd>` — run inside the managed environment.
+- **Git hooks**: run `uv run pre-commit install` once per checkout, after the
+  first `uv sync`. The hook lives in `.git/hooks/` and is **not versioned**, so
+  a fresh clone or a moved/renamed directory must reinstall it, otherwise
+  commits fail with `` `pre-commit` not found ``. Never bypass the hook with
+  `--no-verify`; fix the environment instead.
 
 ## Kaggle authentication
 
