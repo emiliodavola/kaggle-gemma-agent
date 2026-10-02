@@ -130,6 +130,24 @@ Load a skill only when the task genuinely matches its trigger.
 - Do not add AI attribution / `Co-Authored-By` trailers; use conventional
   commit messages.
 
+## Issue and PR templates (mandatory)
+
+Every issue and every PR **must** use the repository templates. No free-form
+bodies, no partial/missing sections.
+
+- **Issues** — open them through `.github/ISSUE_TEMPLATE/task.yml` (the
+  "Task / bug report" form) and complete every required field. When editing an
+  existing issue, keep the same section structure: Kind, Area / component,
+  Summary, Problem / current behavior, Expected behavior, Reproduction /
+  evidence, Acceptance criteria, Scope, Constraints, References, Checklist.
+- **PRs** — every PR body must follow `.github/PULL_REQUEST_TEMPLATE.md`
+  (Summary, Changes, Verification with pasted real output, Files changed,
+  Design artifacts, Checklist) and link its issue with `Closes #N`.
+- Verification sections must contain **real pasted command output**, never a
+  summary or a claim that a command passed.
+- Do not rename, reorder, or delete template sections to work around the
+  requirement; extend them when a change needs more detail.
+
 ## Tracker
 
 - `odd/tasks/*.md` is the per-feature tracker (one file per feature/finding).
