@@ -1076,7 +1076,7 @@ def _wheel_filename_info(filename: str) -> tuple[str, str] | None:
     return parts[0], parts[1]
 
 
-def _version_sort_key(version: str, filename: str) -> tuple:
+def _version_sort_key(version: str, filename: str) -> tuple[tuple[int, ...], int, str]:
     """Sort key mirroring ``sandbox/setup.py``'s ``deduplicate_wheels``."""
     parts = filename[:-4].split("-")
     pyver = parts[-3] if len(parts) >= 3 else ""
