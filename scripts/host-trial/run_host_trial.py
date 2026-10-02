@@ -767,12 +767,15 @@ def ensure_harness_branch(repo_root: Path) -> None:
         raise TrialError("src/kaggle_gemma_agent/harness_runs.py still missing after update.")
 
 
-def _fetch_competition_file(remote_file: str, dest_dir: Path) -> None:
+def _fetch_competition_file(
+    remote_file: str, dest_dir: Path, *, sleep: Callable[[float], None] | None = None
+) -> None:
     """Download one competition file unless a complete copy is already present.
 
     A zero-byte file counts as an aborted download (for example a ``429`` that
     killed the CLI mid-write): it is removed and fetched again instead of being
-    skipped forever. Rate-limited failures are retried with backoff.
+    skipped forever. Rate-limited failures are retried with backoff. *sleep* is
+    forwarded to the retry loop and is injectable for tests.
     """
     name = Path(remote_file).name
     dest = dest_dir / name
@@ -796,6 +799,7 @@ def _fetch_competition_file(remote_file: str, dest_dir: Path) -> None:
             str(dest_dir),
         ],
         what=f"kaggle download {remote_file}",
+        sleep=sleep,
     )
 
 
@@ -898,7 +902,7 @@ def _staged_wheel_names(wheels_dir: Path) -> set[str]:
     }
 
 
-def ensure_trial_wheels(paths: TrialPaths) -> None:
+def ensure_trial_wheels(paths: TrialPaths, *, sleep: Callable[[float], None] | None = None) -> None:
     """Phase 3b/8: stage the competition's ``wheels/`` deps into ``data/raw/wheels/``.
 
     ``swegemma`` resolves the task dependency wheels from the directory next to
@@ -906,22 +910,37 @@ def ensure_trial_wheels(paths: TrialPaths) -> None:
     checks ``<tasks_path parent>/wheels``), so staging them here is what lets the
     air-gapped sandbox bootstrap install the task test dependencies.
 
-    The remote ``wheels/`` listing is always consulted and only the missing
-    wheels are downloaded, so a run interrupted by a ``429`` (leaving a partial
-    set on disk) resumes on the next run instead of being skipped forever by a
-    ``any(*.whl)`` early return. The phase is only skipped when every remote
-    wheel is already staged and non-empty.
+    The local set is inspected first. The remote ``wheels/`` listing is then
+    consulted and only the missing wheels are downloaded, so a run interrupted by
+    a ``429`` (leaving a partial set on disk) resumes on the next run instead of
+    being skipped forever by a ``any(*.whl)`` early return. When the listing is
+    unavailable (offline host or rate-limited listing) but some wheels are
+    already staged, the phase continues with the local set and warns instead of
+    aborting, so an air-gapped re-run still works. A listing that succeeds but is
+    empty is still an error: it means the competition has no ``wheels/`` to
+    stage. *sleep* is injectable for tests.
     """
     phase("Phase 3b/8: ensure trial dependency wheels (data/raw/wheels/)")
+    sleeper = sleep or time.sleep
 
-    remote_wheels = _list_competition_wheels()
+    staged = _staged_wheel_names(paths.wheels_dir)
+    try:
+        remote_wheels = _list_competition_wheels()
+    except TrialError as exc:
+        if staged:
+            note(
+                f"warning: could not list remote wheels ({exc}); continuing with "
+                f"{len(staged)} staged wheel(s) in {paths.wheels_dir}"
+            )
+            return
+        raise
+
     if not remote_wheels:
         raise TrialError(
             f"no files under '{WHEELS_DIRNAME}' in competition {COMPETITION}; "
             "cannot stage the trial dependency wheels."
         )
 
-    staged = _staged_wheel_names(paths.wheels_dir)
     missing = [remote for remote in remote_wheels if Path(remote).name not in staged]
     if not missing:
         note(f"skip (complete): {len(remote_wheels)} wheel(s) already staged in {paths.wheels_dir}")
@@ -933,9 +952,9 @@ def ensure_trial_wheels(paths: TrialPaths) -> None:
     )
     paths.wheels_dir.mkdir(parents=True, exist_ok=True)
     for index, remote_file in enumerate(missing):
-        _fetch_competition_file(remote_file, paths.wheels_dir)
+        _fetch_competition_file(remote_file, paths.wheels_dir, sleep=sleep)
         if index < len(missing) - 1:
-            time.sleep(WHEEL_DOWNLOAD_PAUSE_SECONDS)
+            sleeper(WHEEL_DOWNLOAD_PAUSE_SECONDS)
 
 
 def build_image(paths: TrialPaths) -> None:
