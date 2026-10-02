@@ -511,6 +511,47 @@ def _infer_resolved(record: Mapping[str, Any], junit: Mapping[str, Any] | None) 
     )
 
 
+_COLLECTION_ERROR_MARKERS: tuple[str, ...] = (
+    "error during collection",
+    "error collecting",
+    "import while importing test module",
+)
+_TIMEOUT_MARKERS: tuple[str, ...] = ("pytest-timeout", "timed out")
+_FAILURE_MARKERS: tuple[str, ...] = ("failures", "failed ", "assertionerror")
+
+
+def _classify_failure(text: str) -> str | None:
+    """Classify a failing ``test_output.log`` tail into a coarse failure kind.
+
+    ``collection_error`` (import/collection failure, usually an environment or
+    import breakage) is checked first: pytest prints no ``FAILURES`` banner in
+    that case, so a naive "failed" match would be wrong. ``timeout`` needs an
+    explicit marker so a test named ``test_timeout`` is not misread. Returns
+    ``None`` for empty input.
+    """
+    if not text.strip():
+        return None
+    lowered = text.lower()
+    if any(marker in lowered for marker in _COLLECTION_ERROR_MARKERS):
+        return "collection_error"
+    if any(marker in lowered for marker in _TIMEOUT_MARKERS):
+        return "timeout"
+    if any(marker in lowered for marker in _FAILURE_MARKERS):
+        return "test_failure"
+    return "unknown"
+
+
+def _failure_kind(task_dir: Path, status: str) -> str | None:
+    """Classify the task's ``test_output.log`` when the task is not passing."""
+    if status == "pass":
+        return None
+    test_log = task_dir / "test_output.log"
+    if not test_log.is_file():
+        return None
+    text, _ = _read_tail(test_log, FAILURE_TAIL_CHARS)
+    return _classify_failure(text)
+
+
 def _failure_tail(task_dir: Path) -> dict[str, Any] | None:
     """Return the truncated tail of the richest failing log, or ``None``."""
     for name in ("test_output.log", "session.log"):
@@ -541,6 +582,7 @@ def _build_task(
     explicit_patch = _first(record, _PATCH_KEYS)
     backend = _first(record, _BACKEND_KEYS)
     status = "unknown" if resolved is None else ("pass" if resolved else "fail")
+    failure_kind = _failure_kind(task_dir, status)
 
     return {
         "instance_id": instance_id,
@@ -562,6 +604,7 @@ def _build_task(
         if explicit_patch is not None
         else (f"{instance_id}/agent_patch.diff" if patch_path.is_file() else None),
         "artifacts": _artifact_index(task_dir, run_dir),
+        "failure_kind": failure_kind,
         "failure_tail": _failure_tail(task_dir) if status != "pass" else None,
     }
 
@@ -687,6 +730,16 @@ def render_summary(report: Mapping[str, Any]) -> str:
         task["instance_id"] for task in report.get("tasks", []) if task.get("status") != "pass"
     ]
     top = ", ".join(failed[:5]) if failed else "none"
+    kinds: dict[str, int] = {}
+    for task in report.get("tasks", []):
+        if task.get("status") == "pass":
+            continue
+        kind = str(task.get("failure_kind") or "unknown")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    kind_text = ""
+    if kinds:
+        kind_pairs = " ".join(f"{kind}={count}" for kind, count in sorted(kinds.items()))
+        kind_text = f" | kinds {kind_pairs}"
 
     lines = [
         str(report.get("status", STATUS_BLOCKED)),
@@ -697,7 +750,7 @@ def render_summary(report: Mapping[str, Any]) -> str:
         f"tool_calls {tool_calls}/{_budget_total('tool_calls')} "
         f"| wall {wall_text}/{_budget_total('time_minutes')} min "
         f"| turns {turns}/{_budget_total('turns')}",
-        f"failures {len(failed)} | top: {top}",
+        f"failures {len(failed)}{kind_text} | top: {top}",
         f"schema {report.get('schema_version', SCHEMA_VERSION)} "
         f"| report {report.get('report_path', REPORT_FILE)} "
         f"| index {report.get('index_path', INDEX_FILE)}",
