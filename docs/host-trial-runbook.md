@@ -333,6 +333,11 @@ HARNESS_MODEL=<exact model id the server exposes>
   curl -s http://localhost:12434/models
   ```
 
+  The model manifest reports `format: safetensors`; the registered id is e.g.
+  `huggingface.co/google/gemma-4-31b-it-qat-w4a16-ct:latest`. Use the id the
+  OpenAI API expects, confirmed by
+  `curl -s http://localhost:12434/engines/vllm/v1/models`.
+
   The OpenAI base URL is per-engine:
 
   ```dotenv
