@@ -46,11 +46,13 @@ Decisiones tomadas con el usuario:
       `docs/host-trial-runbook.md` (cache, flag, backend local).
 - [x] T5 — Tests: cache clear, fail-fast/override, clasificacion y STATUS.
 - [x] T6 — `ruff check` + `pytest` + gate de compliance en verde.
+- [x] T7 — Preflight de backend (`smoke_test_backend`, tool-aware) en phase 7 con
+      `--skip-backend-smoke`; habilita LM Studio / llama.cpp local y falla rapido.
 
 ## Evidence
 
 - Branch: `fix/host-trial-deps-integrity` (commits `b3ed390`, `0ff6ce1`).
-- `uv run pytest -q` -> `127 passed`.
+- `uv run pytest -q` -> `133 passed`.
 - `uv run ruff check src/ tests/ scripts/` -> clean.
 - `uv run python -m kaggle_gemma_agent.pack submission --check` -> `6/6 points`.
 - `run_report.build_report(runs/20261001T034308Z)` -> ambos tasks

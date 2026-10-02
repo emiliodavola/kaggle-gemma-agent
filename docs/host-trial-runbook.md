@@ -333,6 +333,12 @@ HARNESS_MODEL=<exact model id the server exposes>
 This is a trial-only knob: the submission still declares the competition model in
 `agent.yaml`; `HARNESS_MODEL` never ships.
 
+Before the eval, the runner probes the backend once through the same proxy with a
+minimal tool-aware chat completion and fails fast on an unreachable endpoint, an
+HTTP error, or an unusable reply — so a misconfigured LM Studio (server stopped,
+wrong model id, model without tool calling) is caught in seconds instead of after
+a full run. `--skip-backend-smoke` skips that single probe.
+
 ### 6.2 Wheel-set integrity and the swegemma cache
 
 The runner clears `swegemma`'s cached unpacked-wheel tars

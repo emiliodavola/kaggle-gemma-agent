@@ -38,6 +38,10 @@ Backend wiring (see ``docs/host-trial-runbook.md`` section 6):
   ``models.yaml`` at run time that maps every ``model:`` alias declared by the
   submission to ``openai/<HARNESS_MODEL>``; the host-local
   ``data/raw/models-trial.yaml`` is no longer read.
+* Before the eval, the runner probes the resolved backend once with a minimal
+  tool-aware chat completion through the same proxy and aborts on failure, so a
+  misconfigured or non-tool model fails in seconds instead of after a full run
+  (``--skip-backend-smoke`` opts out).
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import http.server
+import json
 import os
 import re
 import shutil
@@ -53,7 +58,9 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -487,6 +494,99 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         cast(_ProxyServer, self.server).proxy.handle(self)
+
+
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    """Return a short body snippet from an ``HTTPError``, or ``""``."""
+    try:
+        return exc.read().decode("utf-8", "replace")[:300]
+    except OSError:
+        return ""
+
+
+def smoke_test_backend(
+    base_url: str,
+    model: str,
+    api_key: str,
+    *,
+    timeout_seconds: float = 30.0,
+) -> str:
+    """Probe the trial backend with one minimal, tool-aware chat completion.
+
+    *base_url* is the local header-proxy origin; the proxy joins its configured
+    upstream base path, so this exercises the exact route the harness will use,
+    and the ``tools`` field catches a server/model that cannot do tool calling.
+    Returns a short description of the reply. Raises :class:`TrialError` when the
+    backend is unreachable, rejects the request, or returns no usable choice.
+    """
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+            "max_tokens": 16,
+            "temperature": 0,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "noop",
+                        "description": "Do nothing. Never call this function.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/chat/completions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = _http_error_detail(exc)
+        raise TrialError(
+            f"backend smoke failed: HTTP {exc.code} for model {model!r} at {base_url}: "
+            f"{detail}. Check OPENAI_BASE_URL and HARNESS_MODEL, and that the server "
+            "exposes an OpenAI-compatible /chat/completions endpoint."
+        ) from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise TrialError(
+            f"backend smoke failed: cannot reach {base_url} for model {model!r} ({exc}). "
+            "Start the local server (e.g. LM Studio / llama.cpp) and confirm "
+            "OPENAI_BASE_URL."
+        ) from exc
+
+    try:
+        body = json.loads(raw.decode("utf-8", "replace"))
+    except json.JSONDecodeError as exc:
+        raise TrialError(
+            f"backend smoke failed: non-JSON reply for model {model!r} at {base_url}: {raw[:120]!r}"
+        ) from exc
+
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not choices:
+        raise TrialError(
+            f"backend smoke failed: no choices for model {model!r} at {base_url}. "
+            "The server replied without a chat completion."
+        )
+    message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+    content = message.get("content")
+    tool_calls = message.get("tool_calls")
+    if not content and not tool_calls:
+        raise TrialError(
+            f"backend smoke failed: empty reply for model {model!r}. The model may be "
+            "unloaded or its context length too small."
+        )
+    if tool_calls:
+        return "tool call returned"
+    return str(content).strip()[:40]
 
 
 def build_eval_args(
@@ -1058,7 +1158,12 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
     return resolved
 
 
-def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
+def run_eval(
+    paths: TrialPaths,
+    env: Mapping[str, str],
+    *,
+    skip_backend_smoke: bool = False,
+) -> None:
     """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``."""
     phase("Phase 7/8 (runbook sec. 6): swegemma eval (trial tasks, competition budgets)")
     note(f"task wheels: {paths.wheels_dir} (auto-discovered via the tasks directory)")
@@ -1091,6 +1196,10 @@ def run_eval(paths: TrialPaths, env: Mapping[str, str]) -> None:
     note(f"header proxy: {proxy.base_url} -> {upstream} (+{OPENCODE_SESSION_HEADER})")
     previous_base_url = os.environ.get(OPENAI_BASE_URL)
     os.environ[OPENAI_BASE_URL] = proxy.base_url
+
+    if not skip_backend_smoke:
+        reply = smoke_test_backend(proxy.base_url, harness_model, env[OPENAI_API_KEY])
+        note(f"backend smoke ok: {harness_model} -> {reply!r}")
 
     paths.results_dir.mkdir(parents=True, exist_ok=True)
     task_ids = parse_trial_tasks(env.get(TASKS_ENV, ""))
@@ -1147,6 +1256,7 @@ def run(
     env_file: Path,
     *,
     allow_partial_wheels: bool = False,
+    skip_backend_smoke: bool = False,
 ) -> Path:
     """Execute all eight trial phases and return the archived run directory."""
     paths = paths_for(repo_root, results_name)
@@ -1158,7 +1268,7 @@ def run(
     install_swegemma(paths)
     build_image(paths)
     env = resolve_backend_env(env_file)
-    run_eval(paths, env)
+    run_eval(paths, env, skip_backend_smoke=skip_backend_smoke)
     return archive_and_report(paths, env[HARNESS_MODEL])
 
 
@@ -1188,6 +1298,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "the local set is unverified (may poison the swegemma site-packages cache)"
         ),
     )
+    parser.add_argument(
+        "--skip-backend-smoke",
+        action="store_true",
+        help=(
+            "skip the pre-eval backend probe (saves one LLM call; use only when the "
+            "backend is already known-good)"
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = REPO_ROOT
@@ -1198,6 +1316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.results_name,
             env_file,
             allow_partial_wheels=args.allow_partial_wheels,
+            skip_backend_smoke=args.skip_backend_smoke,
         )
     except TrialError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

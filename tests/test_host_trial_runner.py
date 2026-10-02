@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import email.message
 import http.server
 import importlib.util
+import io
+import json
 import os
 import subprocess
 import sys
 import threading
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -674,6 +678,117 @@ def test_header_injecting_proxy_base_url_requires_start() -> None:
 
     with pytest.raises(runner.TrialError):
         _ = proxy.base_url
+
+
+class _FakeResponse:
+    """Minimal context-managed ``urlopen`` response for smoke tests."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+def test_smoke_test_backend_posts_tool_aware_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_urlopen(request: Any, timeout: float | None = None) -> _FakeResponse:
+        seen["request"] = request
+        seen["timeout"] = timeout
+        return _FakeResponse(b'{"choices":[{"message":{"content":"ok"}}]}')
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", fake_urlopen)
+
+    reply = runner.smoke_test_backend("http://127.0.0.1:5555", "my-model", "sk-key")
+
+    assert reply == "ok"
+    request = seen["request"]
+    assert request.full_url == "http://127.0.0.1:5555/chat/completions"
+    assert request.method == "POST"
+    assert request.get_header("Authorization") == "Bearer sk-key"
+    payload = json.loads(request.data)
+    assert payload["model"] == "my-model"
+    assert payload["tools"][0]["function"]["name"] == "noop"
+
+
+def test_smoke_test_backend_accepts_a_tool_call_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeResponse(
+            b'{"choices":[{"message":{"tool_calls":[{"id":"1"}]}}]}'
+        ),
+    )
+
+    assert runner.smoke_test_backend("http://x", "m", "k") == "tool call returned"
+
+
+def test_smoke_test_backend_reports_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_http(*args: object, **kwargs: object) -> _FakeResponse:
+        raise urllib.error.HTTPError(
+            "http://x",
+            401,
+            "unauthorized",
+            email.message.Message(),
+            io.BytesIO(b'{"error":"bad key"}'),
+        )
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", raise_http)
+
+    with pytest.raises(runner.TrialError, match="HTTP 401"):
+        runner.smoke_test_backend("http://x", "m", "k")
+
+
+def test_smoke_test_backend_reports_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_url(*args: object, **kwargs: object) -> _FakeResponse:
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", raise_url)
+
+    with pytest.raises(runner.TrialError, match="cannot reach"):
+        runner.smoke_test_backend("http://x", "m", "k")
+
+
+def test_smoke_test_backend_reports_missing_and_empty_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeResponse(b'{"choices":[]}'),
+    )
+    with pytest.raises(runner.TrialError, match="no choices"):
+        runner.smoke_test_backend("http://x", "m", "k")
+
+    monkeypatch.setattr(
+        runner.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeResponse(b'{"choices":[{"message":{}}]}'),
+    )
+    with pytest.raises(runner.TrialError, match="empty reply"):
+        runner.smoke_test_backend("http://x", "m", "k")
+
+
+def test_smoke_test_backend_reports_non_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        runner.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeResponse(b"<html>not json</html>"),
+    )
+
+    with pytest.raises(runner.TrialError, match="non-JSON"):
+        runner.smoke_test_backend("http://x", "m", "k")
 
 
 def test_build_eval_args_matches_trial_contract() -> None:
