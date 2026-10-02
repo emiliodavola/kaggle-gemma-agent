@@ -480,6 +480,46 @@ def test_run_cmd_with_retry_exhausts_attempts_with_exponential_backoff(
     assert sleeps == [2.0, 4.0]
 
 
+def test_run_cmd_with_retry_finds_a_marker_on_stdout_alongside_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            _completed(1, stdout="429 Too Many Requests\n", stderr="warning: retrying\n"),
+            _completed(0),
+        ]
+    )
+    monkeypatch.setattr(runner.subprocess, "run", lambda cmd, **kwargs: next(responses))
+    sleeps = _no_sleep(monkeypatch)
+
+    runner.run_cmd_with_retry(["kaggle", "download", "x"], attempts=3)
+
+    assert sleeps == [runner.WHEEL_DOWNLOAD_BACKOFF_SECONDS]
+
+
+def test_looks_rate_limited_ignores_a_bare_429_number() -> None:
+    assert runner._looks_rate_limited("downloaded 429 KB") is False
+    assert runner._looks_rate_limited("offset 429") is False
+    assert runner._looks_rate_limited("429 Client Error: Too Many Requests") is True
+
+
+def test_run_cmd_with_retry_forwards_stderr_on_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        runner.subprocess,
+        "run",
+        lambda cmd, **kwargs: _completed(0, stdout="done\n", stderr="progress 1/3\n"),
+    )
+    _no_sleep(monkeypatch)
+
+    runner.run_cmd_with_retry(["kaggle", "download", "x"])
+
+    captured = capsys.readouterr()
+    assert "done" in captured.out
+    assert "progress 1/3" in captured.err
+
+
 class _StubUpstream(http.server.BaseHTTPRequestHandler):
     headers_seen: ClassVar[dict[str, str]] = {}
     body_seen: ClassVar[bytes] = b""
