@@ -70,7 +70,7 @@ PAGE_TOKEN_MARKER = "Next Page Token ="
 WHEEL_DOWNLOAD_ATTEMPTS = 5
 WHEEL_DOWNLOAD_BACKOFF_SECONDS = 2.0
 WHEEL_DOWNLOAD_PAUSE_SECONDS = 1.5
-RATE_LIMIT_MARKERS: tuple[str, ...] = ("429", "too many requests", "rate limit")
+RATE_LIMIT_MARKERS: tuple[str, ...] = ("too many requests", "rate limit", "429 client error")
 TASK_IDS: tuple[str, ...] = ("fastapi_15661", "fastapi_15588")
 BACKEND_ALIAS = "deepseek-trial"
 SWEGEMMA_TOOL = "swegemma"
@@ -642,7 +642,12 @@ def run_cmd(cmd: Sequence[str], *, what: str | None = None) -> None:
 
 
 def _looks_rate_limited(detail: str) -> bool:
-    """Return whether *detail* (CLI stderr/stdout) signals a transient rate limit."""
+    """Return whether *detail* (CLI stderr/stdout) signals a transient rate limit.
+
+    Only rate-limit phrases are matched; a bare ``429`` is not, so a payload that
+    merely contains that number (a byte size, an offset) is not misread as
+    transient and does not burn the whole backoff budget.
+    """
     lowered = detail.lower()
     return any(marker in lowered for marker in RATE_LIMIT_MARKERS)
 
@@ -657,9 +662,12 @@ def run_cmd_with_retry(
 ) -> None:
     """Echo and run *cmd*, retrying a rate-limited (``429``) failure with backoff.
 
-    Output is captured so a rate-limit marker can be detected. A non-zero exit
-    that is not a rate limit, or that survives *attempts* tries, raises
-    :class:`TrialError` with the captured output. *sleep* is injectable for tests.
+    Output is captured so a rate-limit marker can be detected. Both streams are
+    inspected, so a marker on stdout is found even when stderr carries unrelated
+    output. Stderr is forwarded on success too, so download progress that
+    ``kaggle`` writes there is not swallowed. A non-zero exit that is not a rate
+    limit, or that survives *attempts* tries, raises :class:`TrialError` with the
+    captured output. *sleep* is injectable for tests.
     """
     label = what or cmd[0]
     sleeper = sleep or time.sleep
@@ -671,8 +679,10 @@ def run_cmd_with_retry(
         if result.returncode == 0:
             if result.stdout:
                 print(result.stdout, end="")
+            if result.stderr:
+                print(result.stderr, end="", file=sys.stderr)
             return
-        detail = (result.stderr or result.stdout or "").strip()
+        detail = "\n".join(part.strip() for part in (result.stderr, result.stdout) if part.strip())
         if attempt >= attempts or not _looks_rate_limited(detail):
             raise TrialError(f"{label} failed (exit {result.returncode}): {detail}")
         delay = base_delay * (2 ** (attempt - 1))
