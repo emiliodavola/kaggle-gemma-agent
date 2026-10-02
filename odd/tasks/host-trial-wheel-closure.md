@@ -66,6 +66,7 @@ Decisiones tomadas con el usuario:
 ## Evidence
 
 - Issue: #39.
+- PR: #40.
 - Rama: `fix/host-trial-wheel-closure`.
 - Cierre core real (snapshot `fastapi_14962.tgz` + `data/raw/wheels`, 124 wheels):
   `core MISSING: {'annotated-doc': ('the task repo',), 'typing-inspection':
