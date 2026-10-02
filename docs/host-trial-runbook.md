@@ -377,6 +377,62 @@ the local set is unverified, phase 3b/8 fails fast; pass
 incomplete set can produce containers missing `starlette`/`pydantic` and score
 0/2 with a `collection_error` (see `docs/run-reports.md`).
 
+#### Confirmed competition gap: a complete set can still be missing a transitive dependency
+
+The competition `wheels/` set is **complete by filename but incomplete by
+dependency graph**. Confirmed against Kaggle: 124 wheels including
+`pydantic-2.13.4`, which declares `Requires-Dist: typing-inspection>=0.4.2`, but
+**no `typing-inspection` wheel** (and no `inline-snapshot`). The harness installs
+with `pip install --no-index --find-links=/wheels --no-deps -e /workspace`, so
+the missing transitive dependency breaks `import fastapi` during pytest
+collection and every task scores 0 regardless of the agent's patch (see issue
+#39 / run `20261002T204541Z`).
+
+A naive closure over the **whole** wheelhouse is wrong: the directory is a union
+of several repos' wheels and over-reports many distributions (`blinker`, `attrs`,
+`py`, `toml`, `pathspec`, `trove-classifiers`, `shellingham`). The correct root
+is the task repo's **declared** dependencies, discovered from the task snapshot
+exactly like `data/raw/sandbox/setup.py`.
+
+#### Core gate vs optional warning
+
+After staging, `ensure_trial_wheels` resolves the dependency closure of each
+snapshot's declared requirements against the staged wheels (METADATA
+`Requires-Dist`; environment-marked requirements are skipped), split in two:
+
+- **Core** — `[project].dependencies` only. A missing core dependency (or a
+  declared root that is itself absent, reported as required by `the task repo`)
+  is a **hard gate**: phase 3b/8 **fails fast** with the missing distribution and
+  who requires it, before the eval burns a run. `--allow-incomplete-wheels`
+  bypasses that gate for a deliberate offline run.
+- **Optional/test** — every `[project.optional-dependencies]` group plus
+  `requirements*.txt` / `test-requirements*.txt`. A gap here is only a
+  **warning** (`tests may fail; stage them in data/raw/wheels-extra/`): docs-only
+  or extra dependencies the target tests never import (`uvicorn`, `orjson`,
+  `ujson`, `email-validator`, `python-multipart`, `pydantic-settings`,
+  `pydantic-extra-types`, `fastapi-cli`, `pyyaml`) must not block a valid run.
+  The archived run had `httpx` working even though `h11` (reached via
+  `httpx → httpcore`) is absent, so `h11` is not treated as a core blocker.
+
+#### Supplemental wheels
+
+Stage the missing wheel(s) under `data/raw/wheels-extra/` (merged into
+`data/raw/wheels/` before the closure check) — this is how you fix a core gap or
+an optional warning. Override the directory with the
+`HARNESS_TRIAL_WHEELS_EXTRA` environment variable (`os.pathsep`-separated for
+multiple dirs). For the confirmed gap:
+
+```sh
+uv run --with pip python -m pip download typing-inspection inline-snapshot \
+    -d data/raw/wheels-extra --only-binary=:all: --no-deps
+```
+
+The merge is additive and idempotent: a wheel whose basename is already staged is
+skipped, so re-running is safe. `--allow-incomplete-wheels` bypasses only the
+core gate (the run still records any missing module — see the
+`environment_blocked` / `env missing` handling in `docs/run-reports.md`). Do not
+use it to mask a fixable missing core dependency.
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
