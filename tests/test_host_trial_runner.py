@@ -308,7 +308,7 @@ def _record_fetches(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
     monkeypatch.setattr(
         runner,
         "_fetch_competition_file",
-        lambda remote_file, dest_dir: fetched.append((remote_file, dest_dir)),
+        lambda remote_file, dest_dir, *, sleep=None: fetched.append((remote_file, dest_dir)),
     )
     return fetched
 
@@ -367,15 +367,65 @@ def test_ensure_trial_wheels_downloads_into_the_wheels_dir(
         runner, "_list_competition_wheels", lambda: ["wheels/a.whl", "wheels/b.whl"]
     )
     fetched = _record_fetches(monkeypatch)
-    sleeps = _no_sleep(monkeypatch)
+    sleeps: list[float] = []
 
-    runner.ensure_trial_wheels(paths)
+    runner.ensure_trial_wheels(paths, sleep=sleeps.append)
 
     assert fetched == [
         ("wheels/a.whl", paths.wheels_dir),
         ("wheels/b.whl", paths.wheels_dir),
     ]
     assert sleeps == [runner.WHEEL_DOWNLOAD_PAUSE_SECONDS]
+
+
+def test_ensure_trial_wheels_continues_with_local_set_when_listing_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    (paths.wheels_dir / "a.whl").write_text("wheel-bytes", encoding="utf-8")
+
+    def failing_list() -> list[str]:
+        raise runner.TrialError("offline")
+
+    monkeypatch.setattr(runner, "_list_competition_wheels", failing_list)
+    monkeypatch.setattr(
+        runner, "_fetch_competition_file", lambda *args, **kwargs: pytest.fail("no fetch")
+    )
+
+    runner.ensure_trial_wheels(paths)
+
+
+def test_ensure_trial_wheels_propagates_listing_failure_without_local_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+
+    def failing_list() -> list[str]:
+        raise runner.TrialError("offline")
+
+    monkeypatch.setattr(runner, "_list_competition_wheels", failing_list)
+
+    with pytest.raises(runner.TrialError):
+        runner.ensure_trial_wheels(paths)
+
+
+def test_fetch_competition_file_forwards_sleep_to_the_retry_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: list[object] = []
+    monkeypatch.setattr(
+        runner,
+        "run_cmd_with_retry",
+        lambda cmd, *, what=None, sleep=None: received.append(sleep),
+    )
+
+    def sentinel(_delay: float) -> None:
+        raise AssertionError("sleep should only be forwarded, not called")
+
+    runner._fetch_competition_file("wheels/a.whl", tmp_path, sleep=sentinel)
+
+    assert received == [sentinel]
 
 
 def test_ensure_trial_wheels_skips_only_when_every_wheel_is_staged(
@@ -410,7 +460,7 @@ def test_fetch_competition_file_skips_a_complete_destination(
 ) -> None:
     (tmp_path / "a.whl").write_text("wheel-bytes", encoding="utf-8")
     monkeypatch.setattr(
-        runner, "run_cmd_with_retry", lambda cmd, *, what=None: pytest.fail("no fetch")
+        runner, "run_cmd_with_retry", lambda cmd, *, what=None, sleep=None: pytest.fail("no fetch")
     )
 
     runner._fetch_competition_file("wheels/a.whl", tmp_path)
@@ -422,7 +472,7 @@ def test_fetch_competition_file_refetches_a_zero_byte_destination(
     (tmp_path / "a.whl").write_text("", encoding="utf-8")
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        runner, "run_cmd_with_retry", lambda cmd, *, what=None: calls.append(list(cmd))
+        runner, "run_cmd_with_retry", lambda cmd, *, what=None, sleep=None: calls.append(list(cmd))
     )
 
     runner._fetch_competition_file("wheels/a.whl", tmp_path)
