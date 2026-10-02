@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
 import threading
 import urllib.error
 import urllib.request
@@ -1041,3 +1042,231 @@ def test_install_swegemma_errors_when_binary_missing_after_install(
 
     with pytest.raises(runner.TrialError):
         runner.install_swegemma(paths)
+
+
+# --------------------------------------------------------------------------- #
+# wheel closure (issue #39)
+# --------------------------------------------------------------------------- #
+def _write_wheel(
+    directory: Path,
+    distribution: str,
+    version: str,
+    *,
+    requires: tuple[str, ...] = (),
+) -> Path:
+    """Write a minimal valid wheel carrying a ``*.dist-info/METADATA``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    wheel = directory / f"{distribution}-{version}-py3-none-any.whl"
+    metadata = [
+        "Metadata-Version: 2.1",
+        f"Name: {distribution}",
+        f"Version: {version}",
+        *(f"Requires-Dist: {requirement}" for requirement in requires),
+    ]
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr(f"{distribution}-{version}.dist-info/METADATA", "\n".join(metadata) + "\n")
+    return wheel
+
+
+def _add_tar_member(tar: tarfile.TarFile, name: str, text: str) -> None:
+    data = text.encode("utf-8")
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    tar.addfile(info, io.BytesIO(data))
+
+
+def _write_snapshot(
+    path: Path,
+    *,
+    pyproject: str | None = None,
+    requirements: str | None = None,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(path, "w:gz") as tar:
+        if pyproject is not None:
+            _add_tar_member(tar, "./pyproject.toml", pyproject)
+        if requirements is not None:
+            _add_tar_member(tar, "./requirements-tests.txt", requirements)
+    return path
+
+
+def test_select_wheels_picks_the_highest_version_per_name(tmp_path: Path) -> None:
+    _write_wheel(tmp_path, "pkg", "1.0")
+    newer = _write_wheel(tmp_path, "pkg", "2.1")
+
+    assert runner.select_wheels(tmp_path) == {"pkg": newer}
+
+
+def test_wheel_dependency_closure_flags_a_missing_transitive_dependency(
+    tmp_path: Path,
+) -> None:
+    _write_wheel(tmp_path, "root", "1.0", requires=("Pydantic>=2",))
+    _write_wheel(tmp_path, "pydantic", "2.13.4", requires=("typing-inspection>=0.4.2",))
+
+    closure = runner.wheel_dependency_closure(tmp_path, ["root"])
+
+    assert closure.provided == {"root": "1.0", "pydantic": "2.13.4"}
+    assert closure.missing == {"typing-inspection": ("pydantic",)}
+
+
+def test_wheel_dependency_closure_flags_a_missing_root(tmp_path: Path) -> None:
+    _write_wheel(tmp_path, "present", "1.0")
+
+    closure = runner.wheel_dependency_closure(tmp_path, ["absent"])
+
+    assert closure.missing == {"absent": (runner.TASK_REPO_REQUIRER,)}
+
+
+def test_wheel_dependency_closure_ignores_wheels_outside_the_roots(tmp_path: Path) -> None:
+    _write_wheel(tmp_path, "root", "1.0")
+    _write_wheel(tmp_path, "blinker", "1.9", requires=("flask",))
+
+    closure = runner.wheel_dependency_closure(tmp_path, ["root"])
+
+    assert closure.missing == {}
+
+
+def test_merge_supplemental_wheels_copies_missing_and_skips_existing(tmp_path: Path) -> None:
+    wheels = tmp_path / "wheels"
+    extra = tmp_path / "wheels-extra"
+    wheels.mkdir()
+    extra.mkdir()
+    _write_wheel(wheels, "pkg", "1.0")
+    _write_wheel(extra, "pkg", "1.0")
+    added = _write_wheel(extra, "typing_inspection", "0.4.2")
+
+    copied = runner.merge_supplemental_wheels(wheels, [extra])
+
+    assert copied == [added.name]
+    assert (wheels / added.name).is_file()
+
+
+def test_resolve_wheels_extra_dirs_prefers_env_override(tmp_path: Path) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    override = [tmp_path / "one", tmp_path / "two"]
+
+    assert runner.resolve_wheels_extra_dirs(paths, {}) == [paths.wheels_extra_dir]
+    assert (
+        runner.resolve_wheels_extra_dirs(
+            paths, {runner.WHEELS_EXTRA_ENV: os.pathsep.join(str(p) for p in override)}
+        )
+        == override
+    )
+
+
+def test_read_repo_requirement_names_reads_pyproject_and_requirements(tmp_path: Path) -> None:
+    snapshot = _write_snapshot(
+        tmp_path / "task.tgz",
+        pyproject=(
+            "[project]\n"
+            'name = "demo"\n'
+            'dependencies = ["FastAPI>=0.1", "pydantic"]\n'
+            "[project.optional-dependencies]\n"
+            'test = ["pytest>=8"]\n'
+        ),
+        requirements="starlette==0.1\n# comment\n-r other.txt\n",
+    )
+
+    assert runner.read_repo_requirement_names(snapshot) == {
+        "fastapi",
+        "pydantic",
+        "pytest",
+        "starlette",
+    }
+
+
+def test_read_repo_requirements_splits_core_and_optional(tmp_path: Path) -> None:
+    snapshot = _write_snapshot(
+        tmp_path / "task.tgz",
+        pyproject=(
+            "[project]\n"
+            'name = "demo"\n'
+            'dependencies = ["FastAPI>=0.1"]\n'
+            "[project.optional-dependencies]\n"
+            'test = ["pytest>=8"]\n'
+        ),
+        requirements="starlette==0.1\n",
+    )
+
+    requirements = runner.read_repo_requirements(snapshot)
+
+    assert requirements.core == frozenset({"fastapi"})
+    assert requirements.optional == frozenset({"pytest", "starlette"})
+
+
+def test_ensure_trial_wheels_fails_fast_on_a_missing_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0", requires=("missing-dep",))
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+    monkeypatch.setattr(
+        runner,
+        "_list_competition_wheels",
+        lambda: [f"wheels/{wheel.name}" for wheel in paths.wheels_dir.glob("*.whl")],
+    )
+    monkeypatch.setattr(
+        runner, "_fetch_competition_file", lambda *args, **kwargs: pytest.fail("no fetch")
+    )
+
+    with pytest.raises(runner.TrialError, match="missing-dep"):
+        runner.ensure_trial_wheels(paths, snapshots=[snapshot])
+
+    runner.ensure_trial_wheels(paths, snapshots=[snapshot], allow_incomplete=True)
+
+
+def test_ensure_trial_wheels_fails_fast_on_a_missing_core_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "present", "1.0")
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["absent-core"]\n',
+    )
+    monkeypatch.setattr(
+        runner,
+        "_list_competition_wheels",
+        lambda: [f"wheels/{wheel.name}" for wheel in paths.wheels_dir.glob("*.whl")],
+    )
+    monkeypatch.setattr(
+        runner, "_fetch_competition_file", lambda *args, **kwargs: pytest.fail("no fetch")
+    )
+
+    with pytest.raises(runner.TrialError, match="absent-core"):
+        runner.ensure_trial_wheels(paths, snapshots=[snapshot])
+
+
+def test_ensure_trial_wheels_warns_but_does_not_raise_for_optional_only_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0")
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject=(
+            '[project]\nname = "demo"\ndependencies = ["root"]\n'
+            '[project.optional-dependencies]\ntest = ["optional-dep"]\n'
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_list_competition_wheels",
+        lambda: [f"wheels/{wheel.name}" for wheel in paths.wheels_dir.glob("*.whl")],
+    )
+    monkeypatch.setattr(
+        runner, "_fetch_competition_file", lambda *args, **kwargs: pytest.fail("no fetch")
+    )
+
+    runner.ensure_trial_wheels(paths, snapshots=[snapshot])
+
+    out = capsys.readouterr().out
+    assert "wheel core closure ok" in out
+    assert "test/optional dependencies missing" in out
+    assert "optional-dep" in out

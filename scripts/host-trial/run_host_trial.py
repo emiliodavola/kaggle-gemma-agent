@@ -55,16 +55,19 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from email.message import Message
+from email.parser import Parser
 from pathlib import Path
 from typing import cast
 
@@ -73,6 +76,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPETITION = "gemma-4-developer-agent"
 WHEELHOUSE_DATASET = "metric/gemma-4-developer-agent-wheelhouse"
 WHEELS_DIRNAME = "wheels/"
+#: Supplemental wheels merged into ``data/raw/wheels/`` before the closure check.
+WHEELS_EXTRA_DIRNAME = "wheels-extra"
+#: Overrides the supplemental dir(s); ``os.pathsep``-separated when multiple.
+WHEELS_EXTRA_ENV = "HARNESS_TRIAL_WHEELS_EXTRA"
 LIST_PAGE_SIZE = 200
 PAGE_TOKEN_MARKER = "Next Page Token ="
 WHEEL_DOWNLOAD_ATTEMPTS = 5
@@ -143,6 +150,7 @@ class TrialPaths:
     snapshots_dir: Path
     wheelhouse_dir: Path
     wheels_dir: Path
+    wheels_extra_dir: Path
     docker_context: Path
     submission_dir: Path
     models_yaml: Path
@@ -162,6 +170,7 @@ def paths_for(repo_root: Path, results_name: str) -> TrialPaths:
         snapshots_dir=data_raw / "snapshots",
         wheelhouse_dir=data_raw / "wheelhouse",
         wheels_dir=data_raw / "wheels",
+        wheels_extra_dir=data_raw / WHEELS_EXTRA_DIRNAME,
         docker_context=data_raw / "docker",
         submission_dir=repo_root / "submission",
         models_yaml=results_dir / GENERATED_MODELS_FILENAME,
@@ -1017,6 +1026,311 @@ def _staged_wheel_names(wheels_dir: Path) -> set[str]:
     }
 
 
+def canonicalize_distribution_name(name: str) -> str:
+    """Normalize a distribution name per PEP 503."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+@dataclass(frozen=True)
+class WheelMetadata:
+    """The subset of a wheel's ``METADATA`` used for the closure check."""
+
+    name: str
+    version: str
+    requires: tuple[str, ...]
+
+
+def read_wheel_metadata(archive: Path) -> WheelMetadata | None:
+    """Read ``<dist>.dist-info/METADATA`` from a wheel, or ``None`` on any error."""
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            metadata_name = next(
+                (name for name in zf.namelist() if name.endswith(".dist-info/METADATA")),
+                None,
+            )
+            if metadata_name is None:
+                return None
+            text = zf.read(metadata_name).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    message = Parser().parsestr(text)
+    name = message.get("Name")
+    version = message.get("Version")
+    if not name or not version:
+        return None
+    requires = tuple(str(value) for value in message.get_all("Requires-Dist", []))
+    return WheelMetadata(
+        name=canonicalize_distribution_name(name),
+        version=version,
+        requires=requires,
+    )
+
+
+def _wheel_filename_info(filename: str) -> tuple[str, str] | None:
+    """Return ``(distribution, version)`` from a wheel filename, or ``None``."""
+    if not filename.endswith(".whl"):
+        return None
+    parts = filename[:-4].split("-")
+    if len(parts) < 5:
+        return None
+    return parts[0], parts[1]
+
+
+def _version_sort_key(version: str, filename: str) -> tuple[tuple[int, ...], int, str]:
+    """Sort key mirroring ``sandbox/setup.py``'s ``deduplicate_wheels``."""
+    parts = filename[:-4].split("-")
+    pyver = parts[-3] if len(parts) >= 3 else ""
+    numbers = tuple(int(part) for part in re.findall(r"\d+", version)) or (0,)
+    return (numbers, 1 if "py3" in pyver or "py2.py3" in pyver else 0, filename)
+
+
+def select_wheels(wheels_dir: Path) -> dict[str, Path]:
+    """Return the highest-version wheel per canonical distribution name."""
+    grouped: dict[str, list[tuple[str, str, Path]]] = {}
+    for wheel in sorted(Path(wheels_dir).glob("*.whl")):
+        if not wheel.is_file():
+            continue
+        info = _wheel_filename_info(wheel.name)
+        if info is None:
+            continue
+        distribution, version = info
+        grouped.setdefault(canonicalize_distribution_name(distribution), []).append(
+            (version, wheel.name, wheel)
+        )
+
+    selected: dict[str, Path] = {}
+    for name, candidates in grouped.items():
+        selected[name] = max(candidates, key=lambda c: _version_sort_key(c[0], c[1]))[2]
+    return selected
+
+
+def requirement_distribution_name(requirement: str) -> str | None:
+    """Return the canonical distribution name of *requirement*, or ``None``.
+
+    Environment-marked requirements (``foo; python_version < "3.13"``) are skipped
+    because the host-side closure cannot evaluate the sandbox's markers.
+    """
+    if ";" in requirement:
+        return None
+    token = re.split(r"[\s(\[<>=!~]", requirement.strip(), maxsplit=1)[0]
+    if not token:
+        return None
+    return canonicalize_distribution_name(token)
+
+
+def _clean_requirement_line(line: str) -> str:
+    """Clean a requirement line like ``sandbox/setup.py``'s ``clean_requirement_line``."""
+    line = line.strip()
+    if not line or line.startswith("#") or line.startswith("-"):
+        return ""
+    line = re.sub(r";.*$", "", line)
+    line = re.sub(r"\[.*?\]", "", line)
+    line = re.split(r"[=<>!~]", line)[0]
+    return line.strip()
+
+
+def _names_from_requirement_lines(lines: Iterable[str]) -> set[str]:
+    """Canonicalize the distribution names of non-empty requirement lines."""
+    names: set[str] = set()
+    for line in lines:
+        cleaned = _clean_requirement_line(line)
+        if cleaned:
+            names.add(canonicalize_distribution_name(cleaned))
+    return names
+
+
+def _requirements_from_pyproject(data: bytes) -> tuple[set[str], set[str]]:
+    """Split ``[project]`` deps (core) from optional groups (optional) in TOML bytes."""
+    try:
+        parsed = tomllib.loads(data.decode("utf-8", errors="replace"))
+    except tomllib.TOMLDecodeError, UnicodeError:
+        return set(), set()
+    if not isinstance(parsed, dict):
+        return set(), set()
+    project = parsed.get("project", {})
+    if not isinstance(project, dict):
+        return set(), set()
+
+    core: list[str] = []
+    dependencies = project.get("dependencies", [])
+    if isinstance(dependencies, list):
+        core.extend(str(dependency) for dependency in dependencies)
+    optional: list[str] = []
+    groups = project.get("optional-dependencies", {})
+    if isinstance(groups, dict):
+        for group in groups.values():
+            if isinstance(group, list):
+                optional.extend(str(dependency) for dependency in group)
+    return _names_from_requirement_lines(core), _names_from_requirement_lines(optional)
+
+
+@dataclass(frozen=True)
+class RepoRequirements:
+    """A task repo's declared requirements, split core vs optional/test."""
+
+    core: frozenset[str]
+    optional: frozenset[str]
+
+
+def read_repo_requirements(snapshot: Path) -> RepoRequirements:
+    """Return the canonical dependencies declared by a task snapshot ``.tgz``.
+
+    Mirrors ``sandbox/setup.py`` discovery from the repo-root ``pyproject.toml``
+    and ``requirements*.txt`` / ``test-requirements*.txt`` members (skipping
+    ``docker/`` and ``.git``), but splits the result:
+
+    * ``core`` — ``[project].dependencies`` only; a missing core dependency is a
+      hard gate because the repo cannot import without it.
+    * ``optional`` — every ``[project.optional-dependencies]`` group plus the
+      requirements files; a missing optional/test dependency is a warning.
+
+    Missing or unreadable input yields two empty sets so the closure is skipped.
+    """
+    core: set[str] = set()
+    optional: set[str] = set()
+    try:
+        with tarfile.open(snapshot, "r:gz") as tar:
+            for member in tar.getmembers():
+                if not member.isfile():
+                    continue
+                normalized = member.name[2:] if member.name.startswith("./") else member.name
+                base = Path(normalized).name
+                if normalized == "pyproject.toml":
+                    handle = tar.extractfile(member)
+                    if handle is not None:
+                        pyproject_core, pyproject_optional = _requirements_from_pyproject(
+                            handle.read()
+                        )
+                        core.update(pyproject_core)
+                        optional.update(pyproject_optional)
+                elif base.startswith(("requirements", "test-requirements")) and base.endswith(
+                    ".txt"
+                ):
+                    if "docker/" in normalized or ".git" in normalized:
+                        continue
+                    handle = tar.extractfile(member)
+                    if handle is not None:
+                        text = handle.read().decode("utf-8", errors="replace")
+                        optional.update(_names_from_requirement_lines(text.splitlines()))
+    except OSError, tarfile.TarError, EOFError:
+        return RepoRequirements(core=frozenset(), optional=frozenset())
+    return RepoRequirements(core=frozenset(core), optional=frozenset(optional))
+
+
+def read_repo_requirement_names(snapshot: Path) -> set[str]:
+    """Return ``core | optional`` declared dependency names for a snapshot."""
+    requirements = read_repo_requirements(snapshot)
+    return set(requirements.core | requirements.optional)
+
+
+@dataclass(frozen=True)
+class WheelClosure:
+    """Provided distributions and missing ones mapped to who requires them."""
+
+    provided: dict[str, str]
+    missing: dict[str, tuple[str, ...]]
+
+
+#: Sentinel requirer for a declared root that is absent from the wheelhouse.
+TASK_REPO_REQUIRER = "the task repo"
+
+
+def _missing_details(missing: Mapping[str, tuple[str, ...]]) -> str:
+    """Render a missing map as ``name (required by a, b); ...`` for messages."""
+    return "; ".join(
+        f"{name} (required by {', '.join(requirers)})"
+        for name, requirers in sorted(missing.items())
+    )
+
+
+def wheel_dependency_closure(wheels_dir: Path, roots: Iterable[str]) -> WheelClosure:
+    """Resolve the wheelhouse closure reachable from *roots*.
+
+    Only distributions reachable from the declared *roots* are traversed, so a
+    multi-repo wheel union does not produce false positives. A queued name that
+    is not provided is recorded as ``missing`` — a declared *root* under the
+    :data:`TASK_REPO_REQUIRER` sentinel, a transitive dependency under the name
+    of the provided wheel that requires it. Environment-marked requirements are
+    ignored by :func:`requirement_distribution_name`.
+    """
+    selected = select_wheels(wheels_dir)
+    metadata: dict[str, WheelMetadata] = {}
+    provided: dict[str, str] = {}
+    for name, wheel in selected.items():
+        meta = read_wheel_metadata(wheel)
+        if meta is None:
+            continue
+        metadata[name] = meta
+        provided[name] = meta.version
+
+    missing: dict[str, set[str]] = {}
+    visited: set[str] = set()
+    queue: list[str] = []
+    for root in roots:
+        if not root.strip():
+            continue
+        canonical = canonicalize_distribution_name(root)
+        if canonical:
+            queue.append(canonical)
+    while queue:
+        name = queue.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        if name not in provided:
+            missing.setdefault(name, set()).add(TASK_REPO_REQUIRER)
+            continue
+        meta = metadata.get(name)
+        if meta is None:
+            continue
+        for requirement in meta.requires:
+            dependency = requirement_distribution_name(requirement)
+            if dependency is None:
+                continue
+            if dependency not in provided:
+                missing.setdefault(dependency, set()).add(name)
+            elif dependency not in visited:
+                queue.append(dependency)
+
+    return WheelClosure(
+        provided=provided,
+        missing={name: tuple(sorted(requirers)) for name, requirers in missing.items()},
+    )
+
+
+def merge_supplemental_wheels(wheels_dir: Path, extra_dirs: Sequence[Path]) -> list[str]:
+    """Copy non-empty ``*.whl`` from *extra_dirs* into *wheels_dir* when absent.
+
+    Returns the sorted basenames actually copied, so the caller can log them.
+    """
+    target = Path(wheels_dir)
+    existing = _staged_wheel_names(target)
+    copied: list[str] = []
+    for extra_dir in extra_dirs:
+        source = Path(extra_dir)
+        if not source.is_dir():
+            continue
+        for wheel in sorted(source.glob("*.whl")):
+            if not wheel.is_file() or wheel.stat().st_size == 0 or wheel.name in existing:
+                continue
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(wheel, target / wheel.name)
+            existing.add(wheel.name)
+            copied.append(wheel.name)
+    return sorted(copied)
+
+
+def resolve_wheels_extra_dirs(
+    paths: TrialPaths, env: Mapping[str, str] | None = None
+) -> list[Path]:
+    """Return the supplemental wheel dir(s): the env override, else the default."""
+    source = os.environ if env is None else env
+    raw = source.get(WHEELS_EXTRA_ENV, "")
+    if raw:
+        return [Path(part) for part in raw.split(os.pathsep) if part]
+    return [paths.wheels_extra_dir]
+
+
 def clear_swegemma_site_packages_cache(temp_root: Path | None = None) -> list[str]:
     """Remove swegemma's cached unpacked-wheel tars so they rebuild from the current set.
 
@@ -1044,6 +1358,9 @@ def ensure_trial_wheels(
     *,
     sleep: Callable[[float], None] | None = None,
     allow_partial: bool = False,
+    allow_incomplete: bool = False,
+    extra_dirs: Sequence[Path] = (),
+    snapshots: Sequence[Path] = (),
 ) -> None:
     """Phase 3b/8: stage the competition's ``wheels/`` deps into ``data/raw/wheels/``.
 
@@ -1062,6 +1379,15 @@ def ensure_trial_wheels(
     0/2 with a container missing its dependencies. A listing that succeeds but is
     empty is still an error: it means the competition has no ``wheels/`` to
     stage. *sleep* is injectable for tests.
+
+    After staging, wheels from *extra_dirs* are merged in, and when *snapshots*
+    is given the dependency closure of each repo's declared requirements is
+    resolved against the staged wheelhouse. A gap in the **core** runtime
+    dependencies (``[project].dependencies``) fails fast (``TrialError``) unless
+    *allow_incomplete* is set, so a wheel set that is complete by filename but
+    missing a transitive dependency cannot silently produce 0/2. Test/optional
+    dependencies (optional groups, requirements files) are only warned about, so
+    a docs-only or extra wheel cannot block an otherwise valid run.
     """
     phase("Phase 3b/8: ensure trial dependency wheels (data/raw/wheels/)")
     sleeper = sleep or time.sleep
@@ -1094,19 +1420,59 @@ def ensure_trial_wheels(
         )
 
     missing = [remote for remote in remote_wheels if Path(remote).name not in staged]
-    if not missing:
+    if missing:
+        note(
+            f"staging {len(missing)}/{len(remote_wheels)} wheel(s) into {paths.wheels_dir} "
+            f"({len(remote_wheels) - len(missing)} already present)"
+        )
+        paths.wheels_dir.mkdir(parents=True, exist_ok=True)
+        for index, remote_file in enumerate(missing):
+            _fetch_competition_file(remote_file, paths.wheels_dir, sleep=sleep)
+            if index < len(missing) - 1:
+                sleeper(WHEEL_DOWNLOAD_PAUSE_SECONDS)
+    else:
         note(f"skip (complete): {len(remote_wheels)} wheel(s) already staged in {paths.wheels_dir}")
-        return
 
-    note(
-        f"staging {len(missing)}/{len(remote_wheels)} wheel(s) into {paths.wheels_dir} "
-        f"({len(remote_wheels) - len(missing)} already present)"
-    )
-    paths.wheels_dir.mkdir(parents=True, exist_ok=True)
-    for index, remote_file in enumerate(missing):
-        _fetch_competition_file(remote_file, paths.wheels_dir, sleep=sleep)
-        if index < len(missing) - 1:
-            sleeper(WHEEL_DOWNLOAD_PAUSE_SECONDS)
+    merged = merge_supplemental_wheels(paths.wheels_dir, extra_dirs)
+    if merged:
+        note(
+            f"merged {len(merged)} supplemental wheel(s) into {paths.wheels_dir}: "
+            + ", ".join(merged)
+        )
+
+    core_roots: set[str] = set()
+    optional_roots: set[str] = set()
+    for snapshot in snapshots:
+        if Path(snapshot).is_file():
+            requirements = read_repo_requirements(snapshot)
+            core_roots.update(requirements.core)
+            optional_roots.update(requirements.optional)
+
+    if core_roots:
+        core_closure = wheel_dependency_closure(paths.wheels_dir, core_roots)
+        if core_closure.missing:
+            details = _missing_details(core_closure.missing)
+            if not allow_incomplete:
+                raise TrialError(
+                    f"incomplete wheel core closure for the trial snapshots: {details}. "
+                    "Stage the missing wheel(s) into data/raw/wheels-extra/ (or set "
+                    f"{WHEELS_EXTRA_ENV} to a directory of wheels), for example: "
+                    "`uv run --with pip python -m pip download <name> -d data/raw/wheels-extra "
+                    "--only-binary=:all: --no-deps`. Pass --allow-incomplete-wheels to "
+                    "proceed with a known gap."
+                )
+            note(f"warning: incomplete wheel core closure: {details} (--allow-incomplete-wheels)")
+        else:
+            note(f"wheel core closure ok: {len(core_closure.provided)} distributions")
+
+    if optional_roots:
+        optional_closure = wheel_dependency_closure(paths.wheels_dir, optional_roots)
+        if optional_closure.missing:
+            note(
+                "warning: test/optional dependencies missing from the wheel set: "
+                f"{_missing_details(optional_closure.missing)} "
+                "(tests may fail; stage them in data/raw/wheels-extra/)"
+            )
 
 
 def build_image(paths: TrialPaths) -> None:
@@ -1256,6 +1622,7 @@ def run(
     env_file: Path,
     *,
     allow_partial_wheels: bool = False,
+    allow_incomplete_wheels: bool = False,
     skip_backend_smoke: bool = False,
 ) -> Path:
     """Execute all eight trial phases and return the archived run directory."""
@@ -1264,7 +1631,14 @@ def run(
     ensure_harness_branch(Path(repo_root))
     task_ids = resolve_trial_tasks(load_env_file(env_file), os.environ)
     fetch_data(paths, task_ids)
-    ensure_trial_wheels(paths, allow_partial=allow_partial_wheels)
+    snapshots = [paths.snapshots_dir / f"{task_id}.tgz" for task_id in task_ids]
+    ensure_trial_wheels(
+        paths,
+        allow_partial=allow_partial_wheels,
+        allow_incomplete=allow_incomplete_wheels,
+        extra_dirs=resolve_wheels_extra_dirs(paths),
+        snapshots=snapshots,
+    )
     install_swegemma(paths)
     build_image(paths)
     env = resolve_backend_env(env_file)
@@ -1299,6 +1673,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--allow-incomplete-wheels",
+        action="store_true",
+        help=(
+            "proceed when the staged wheelhouse misses a transitive dependency of "
+            "the task repo (a known gap; otherwise phase 3b fails fast)"
+        ),
+    )
+    parser.add_argument(
         "--skip-backend-smoke",
         action="store_true",
         help=(
@@ -1316,6 +1698,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.results_name,
             env_file,
             allow_partial_wheels=args.allow_partial_wheels,
+            allow_incomplete_wheels=args.allow_incomplete_wheels,
             skip_backend_smoke=args.skip_backend_smoke,
         )
     except TrialError as exc:

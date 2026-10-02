@@ -54,6 +54,8 @@ Top-level keys:
 | `generated_at` | `str` | ISO-8601 UTC timestamp. |
 | `status` | `str` | `DONE` / `BLOCKED` / `PARTIAL` (see §3). |
 | `status_reasons` | `list[str]` | Why `PARTIAL`/`BLOCKED` was chosen (empty for `DONE`). |
+| `environment_blocked` | `bool` | `true` when the **same** missing module appears in `>= 2` failing tasks (a uniform environment gap, not agent performance). |
+| `missing_modules` | `list[str]` | Sorted union of every `No module named '...'` module across failing tasks. |
 | `env` | `object` | Host/backend names — **never credential values** (see §7). |
 | `budgets` | `object` | Per-task budgets: `tool_calls` 100, `time_minutes` 60, `turns` 500. |
 | `totals` | `object` | `tasks`, `resolved`, `unresolved`, `unknown`, `resolution_rate`, `wall_seconds`, `tool_calls`, `turns`. |
@@ -85,6 +87,7 @@ Top-level keys:
 | `artifacts` | `object` | `run-relative path → {size, sha256}` for **every** task file. |
 | `failure_tail` | `object \| null` | `{source, chars, truncated, text}` for non-passing tasks. |
 | `failure_kind` | `str \| null` | Coarse cause from `test_output.log`: `collection_error` / `test_failure` / `timeout` / `unknown`; `null` when the task passed or has no test log. |
+| `missing_modules` | `list[str]` | Sorted unique `No module named '...'` modules from the `test_output.log` tail; empty for a passing task or one without a test log. |
 
 `fail_to_pass` / `pass_to_pass` are always present when `junit.xml` exists.
 Expected nodes come from (in order): the result line's `FAIL_TO_PASS` /
@@ -113,6 +116,15 @@ When at least one task failed, the `failures` line also carries the coarse
 causes, e.g. `failures 2 | kinds collection_error=2 | top: fastapi_15588, ...`.
 That distinguishes an environment/collection failure from an assertion failure
 without opening `failure_tail`; the per-task value is `failure_kind` above.
+
+When the same missing module appears in `>= 2` failing tasks, `environment_blocked`
+is set and the `failures` line additionally carries `| env missing: <names>`,
+e.g. `failures 5 | kinds collection_error=5 | env missing: typing_inspection | top: ...`.
+The matching `status_reasons` entry reads
+`environment failure: missing module(s) typing_inspection (5/5 tasks)`, so a
+uniform dependency gap (the competition wheel set is incomplete, see
+`docs/host-trial-runbook.md` §6.2) is not mistaken for agent performance. A single
+task or two tasks with *different* modules does not set the flag.
 
 Status selection:
 
