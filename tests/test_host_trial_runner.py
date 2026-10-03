@@ -1270,3 +1270,155 @@ def test_ensure_trial_wheels_warns_but_does_not_raise_for_optional_only_gap(
     assert "wheel core closure ok" in out
     assert "test/optional dependencies missing" in out
     assert "optional-dep" in out
+
+
+# --------------------------------------------------------------------------- #
+# sandbox dependency repair (issue #41)
+# --------------------------------------------------------------------------- #
+def _staged_remote_wheels(paths: Any) -> list[str]:
+    """Return the competition listing for the wheels currently staged in *paths*."""
+    return [f"wheels/{wheel.name}" for wheel in paths.wheels_dir.glob("*.whl")]
+
+
+def _no_fetch(*args: Any, **kwargs: Any) -> None:
+    pytest.fail("no competition fetch expected")
+
+
+def test_ensure_trial_wheels_without_repair_ignores_supplemental_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0")
+    extra = tmp_path / "wheels-extra"
+    added = _write_wheel(extra, "supplemental", "1.0")
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+    monkeypatch.setattr(runner, "_list_competition_wheels", lambda: _staged_remote_wheels(paths))
+    monkeypatch.setattr(runner, "_fetch_competition_file", _no_fetch)
+
+    runner.ensure_trial_wheels(paths, extra_dirs=[extra], snapshots=[snapshot])
+
+    assert not (paths.wheels_dir / added.name).is_file()
+    out = capsys.readouterr().out
+    assert "supplemental wheels not merged" in out
+
+
+def test_ensure_trial_wheels_with_repair_merges_supplemental_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0")
+    extra = tmp_path / "wheels-extra"
+    added = _write_wheel(extra, "supplemental", "1.0")
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+    monkeypatch.setattr(runner, "_list_competition_wheels", lambda: _staged_remote_wheels(paths))
+    monkeypatch.setattr(runner, "_fetch_competition_file", _no_fetch)
+
+    runner.ensure_trial_wheels(paths, extra_dirs=[extra], snapshots=[snapshot], repair=True)
+
+    assert (paths.wheels_dir / added.name).is_file()
+    out = capsys.readouterr().out
+    assert "merged 1 supplemental wheel(s)" in out
+
+
+def test_ensure_trial_wheels_repair_fetches_a_missing_core_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0", requires=("missing-dep>=1",))
+    extra = tmp_path / "wheels-extra"
+    extra.mkdir()
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+    monkeypatch.setattr(runner, "_list_competition_wheels", lambda: _staged_remote_wheels(paths))
+    monkeypatch.setattr(runner, "_fetch_competition_file", _no_fetch)
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_download(names: list[str], dest: Path) -> list[str]:
+        calls.append((list(names), Path(dest)))
+        _write_wheel(Path(dest), "missing_dep", "1.0")
+        return sorted(path.name for path in Path(dest).glob("*.whl"))
+
+    monkeypatch.setattr(runner, "download_missing_wheels", fake_download)
+
+    runner.ensure_trial_wheels(paths, extra_dirs=[extra], snapshots=[snapshot], repair=True)
+
+    assert calls == [(["missing-dep"], extra)]
+    out = capsys.readouterr().out
+    assert "fetched 1 core wheel(s)" in out
+    assert "wheel core closure ok" in out
+
+
+def test_ensure_trial_wheels_repair_off_fails_fast_on_a_missing_core_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0", requires=("missing-dep>=1",))
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+    monkeypatch.setattr(runner, "_list_competition_wheels", lambda: _staged_remote_wheels(paths))
+    monkeypatch.setattr(runner, "_fetch_competition_file", _no_fetch)
+    monkeypatch.setattr(
+        runner,
+        "download_missing_wheels",
+        lambda *args, **kwargs: pytest.fail("repair off must not fetch"),
+    )
+
+    with pytest.raises(runner.TrialError, match="missing-dep"):
+        runner.ensure_trial_wheels(paths, snapshots=[snapshot], repair=False)
+
+
+def test_download_missing_wheels_builds_the_container_target_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = tmp_path / "wheels-extra"
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        _write_wheel(dest, "typing_inspection", "0.4.2")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    assert runner.download_missing_wheels([], tmp_path / "unused") == []
+
+    fetched = runner.download_missing_wheels(["typing-inspection"], dest)
+
+    assert calls == [
+        [
+            *runner.PIP_DOWNLOAD_CMD,
+            "typing-inspection",
+            "-d",
+            str(dest),
+            *runner.PIP_CONTAINER_TARGET,
+        ]
+    ]
+    assert fetched == ["typing_inspection-0.4.2-py3-none-any.whl"]
+
+
+def test_download_missing_wheels_raises_on_a_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="ERROR: no matching distribution found"
+        )
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    with pytest.raises(runner.TrialError, match="no matching distribution found"):
+        runner.download_missing_wheels(["typing-inspection"], tmp_path / "wheels-extra")

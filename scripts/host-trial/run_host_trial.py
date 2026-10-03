@@ -80,6 +80,33 @@ WHEELS_DIRNAME = "wheels/"
 WHEELS_EXTRA_DIRNAME = "wheels-extra"
 #: Overrides the supplemental dir(s); ``os.pathsep``-separated when multiple.
 WHEELS_EXTRA_ENV = "HARNESS_TRIAL_WHEELS_EXTRA"
+#: Fetch target for the sandbox container (python:3.13-slim, linux x86_64).
+PIP_DOWNLOAD_CMD: tuple[str, ...] = (
+    "uv",
+    "run",
+    "--with",
+    "pip",
+    "python",
+    "-m",
+    "pip",
+    "download",
+)
+PIP_CONTAINER_TARGET: tuple[str, ...] = (
+    "--platform",
+    "manylinux2014_x86_64",
+    "--platform",
+    "manylinux_2_17_x86_64",
+    "--platform",
+    "manylinux_2_28_x86_64",
+    "--python-version",
+    "3.13",
+    "--implementation",
+    "cp",
+    "--abi",
+    "cp313",
+    "--only-binary=:all:",
+    "--no-deps",
+)
 LIST_PAGE_SIZE = 200
 PAGE_TOKEN_MARKER = "Next Page Token ="
 WHEEL_DOWNLOAD_ATTEMPTS = 5
@@ -1320,6 +1347,27 @@ def merge_supplemental_wheels(wheels_dir: Path, extra_dirs: Sequence[Path]) -> l
     return sorted(copied)
 
 
+def download_missing_wheels(names: Sequence[str], dest_dir: Path) -> list[str]:
+    """Download *names* from PyPI into *dest_dir* for the container target.
+
+    Fetches binary wheels built for the sandbox (python:3.13-slim, linux
+    x86_64) without resolving dependencies, so the result can be merged into the
+    staged wheelhouse to repair a core dependency gap. Returns the sorted
+    basenames present after the download.
+    """
+    if not names:
+        return []
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [*PIP_DOWNLOAD_CMD, *names, "-d", str(dest_dir), *PIP_CONTAINER_TARGET]
+    print("  $ " + " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        detail = (result.stderr.strip() or result.stdout.strip())[:500]
+        raise TrialError(f"pip download failed for {', '.join(names)}: {detail}")
+    return sorted(path.name for path in dest_dir.glob("*.whl"))
+
+
 def resolve_wheels_extra_dirs(
     paths: TrialPaths, env: Mapping[str, str] | None = None
 ) -> list[Path]:
@@ -1359,6 +1407,7 @@ def ensure_trial_wheels(
     sleep: Callable[[float], None] | None = None,
     allow_partial: bool = False,
     allow_incomplete: bool = False,
+    repair: bool = False,
     extra_dirs: Sequence[Path] = (),
     snapshots: Sequence[Path] = (),
 ) -> None:
@@ -1388,6 +1437,12 @@ def ensure_trial_wheels(
     missing a transitive dependency cannot silently produce 0/2. Test/optional
     dependencies (optional groups, requirements files) are only warned about, so
     a docs-only or extra wheel cannot block an otherwise valid run.
+
+    *repair* gates the supplemental merge: off (default) keeps the faithful
+    competition set, on merges *extra_dirs* and fetches the missing core
+    dependencies from PyPI for the container target so the local Docker sandbox
+    matches the Kaggle notebook image. Only core dependencies are fetched;
+    optional/test gaps stay warnings.
     """
     phase("Phase 3b/8: ensure trial dependency wheels (data/raw/wheels/)")
     sleeper = sleep or time.sleep
@@ -1433,12 +1488,15 @@ def ensure_trial_wheels(
     else:
         note(f"skip (complete): {len(remote_wheels)} wheel(s) already staged in {paths.wheels_dir}")
 
-    merged = merge_supplemental_wheels(paths.wheels_dir, extra_dirs)
-    if merged:
-        note(
-            f"merged {len(merged)} supplemental wheel(s) into {paths.wheels_dir}: "
-            + ", ".join(merged)
-        )
+    if repair:
+        merged = merge_supplemental_wheels(paths.wheels_dir, extra_dirs)
+        if merged:
+            note(
+                f"merged {len(merged)} supplemental wheel(s) into {paths.wheels_dir}: "
+                + ", ".join(merged)
+            )
+    else:
+        note("supplemental wheels not merged (pass --repair-sandbox-deps to repair the sandbox)")
 
     core_roots: set[str] = set()
     optional_roots: set[str] = set()
@@ -1449,9 +1507,17 @@ def ensure_trial_wheels(
             optional_roots.update(requirements.optional)
 
     if core_roots:
-        core_closure = wheel_dependency_closure(paths.wheels_dir, core_roots)
-        if core_closure.missing:
-            details = _missing_details(core_closure.missing)
+        closure = wheel_dependency_closure(paths.wheels_dir, core_roots)
+        if closure.missing and repair:
+            dest = extra_dirs[0] if extra_dirs else paths.wheels_extra_dir
+            missing_names = sorted(closure.missing)
+            fetched = download_missing_wheels(missing_names, dest)
+            if fetched:
+                note(f"fetched {len(fetched)} core wheel(s) into {dest}: " + ", ".join(fetched))
+            merge_supplemental_wheels(paths.wheels_dir, [*extra_dirs, dest])
+            closure = wheel_dependency_closure(paths.wheels_dir, core_roots)
+        if closure.missing:
+            details = _missing_details(closure.missing)
             if not allow_incomplete:
                 raise TrialError(
                     f"incomplete wheel core closure for the trial snapshots: {details}. "
@@ -1463,7 +1529,7 @@ def ensure_trial_wheels(
                 )
             note(f"warning: incomplete wheel core closure: {details} (--allow-incomplete-wheels)")
         else:
-            note(f"wheel core closure ok: {len(core_closure.provided)} distributions")
+            note(f"wheel core closure ok: {len(closure.provided)} distributions")
 
     if optional_roots:
         optional_closure = wheel_dependency_closure(paths.wheels_dir, optional_roots)
@@ -1623,6 +1689,7 @@ def run(
     *,
     allow_partial_wheels: bool = False,
     allow_incomplete_wheels: bool = False,
+    repair_sandbox_deps: bool = False,
     skip_backend_smoke: bool = False,
 ) -> Path:
     """Execute all eight trial phases and return the archived run directory."""
@@ -1636,6 +1703,7 @@ def run(
         paths,
         allow_partial=allow_partial_wheels,
         allow_incomplete=allow_incomplete_wheels,
+        repair=repair_sandbox_deps,
         extra_dirs=resolve_wheels_extra_dirs(paths),
         snapshots=snapshots,
     )
@@ -1688,6 +1756,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "backend is already known-good)"
         ),
     )
+    parser.add_argument(
+        "--repair-sandbox-deps",
+        action="store_true",
+        help=(
+            "merge supplemental wheels and fetch the missing core dependencies from "
+            "PyPI so the local Docker sandbox matches the Kaggle notebook image "
+            "(default: faithful competition set)"
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = REPO_ROOT
@@ -1699,6 +1776,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             env_file,
             allow_partial_wheels=args.allow_partial_wheels,
             allow_incomplete_wheels=args.allow_incomplete_wheels,
+            repair_sandbox_deps=args.repair_sandbox_deps,
             skip_backend_smoke=args.skip_backend_smoke,
         )
     except TrialError as exc:

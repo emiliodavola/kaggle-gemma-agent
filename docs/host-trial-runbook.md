@@ -433,6 +433,34 @@ core gate (the run still records any missing module — see the
 `environment_blocked` / `env missing` handling in `docs/run-reports.md`). Do not
 use it to mask a fixable missing core dependency.
 
+#### Faithful vs repaired sandbox dependencies (`--repair-sandbox-deps`)
+
+The Docker sandbox installs every base wheel (< 20 MB) into site-packages
+**without resolving dependencies** and picks the highest py3.13 version. The
+competition set ships `pydantic 2.13.4` without `typing-inspection`, so
+`import fastapi` fails during pytest collection; the Kaggle notebook/subprocess
+image does not have the problem (`pydantic 2.12.3` + `typing-inspection`) — see
+[discussion 744370](https://www.kaggle.com/competitions/gemma-4-developer-agent/discussion/744370).
+
+The flag separates the two modes:
+
+- **Off (default) — faithful.** `ensure_trial_wheels` does not merge
+  `data/raw/wheels-extra/` and does not fetch anything; the run uses the
+  competition set exactly as shipped. A missing core dependency still fails fast
+  (see the core gate above).
+- **On — repaired.** The runner merges `data/raw/wheels-extra/` (override with
+  `HARNESS_TRIAL_WHEELS_EXTRA`), then downloads any still-missing **core**
+  dependency from PyPI for the container target (python:3.13-slim, linux x86_64;
+  `cp313` / manylinux, `--only-binary=:all: --no-deps`) via
+  `uv run --with pip python -m pip download`, re-merges, and re-checks the core
+  closure. This makes the local Docker sandbox match the notebook image.
+
+The repair touches **core runtime dependencies only**. Test/optional gaps
+(`inline_snapshot`, `dirty_equals`, ...) stay warnings because the notebook image
+lacks them too, so fetching them would make the local trial less faithful than
+the scored environment. `--allow-incomplete-wheels` remains the explicit bypass
+for a deliberate offline run.
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
