@@ -29,16 +29,24 @@ Decisiones tomadas con el usuario:
 
 ## Tasks
 
-- [ ] T1 — Runner: `BACKEND_PRESETS` + `DEFAULT_BACKEND`; `resolve_trial_env`
+- [x] T1 — Runner: `BACKEND_PRESETS` + `DEFAULT_BACKEND`; `resolve_trial_env`
       resuelve base URL por selector (override explicito gana) y valida el backend.
-- [ ] T2 — Runner: `parse_env_file` sin cap; error claro en clave activa duplicada.
-- [ ] T3 — `.env.example`: selector + presets comentados; sin claves activas duplicadas.
-- [ ] T4 — Docs: runbook §6/§6.1 (selector, presets, precedencia, modelo explicito).
-- [ ] T5 — Tests: selector, precedencia override, backend desconocido, duplicados,
+- [x] T2 — Runner: `parse_env_file` sin cap; error claro en clave activa duplicada.
+- [x] T3 — `.env.example`: selector + presets comentados; sin claves activas duplicadas.
+- [x] T4 — Docs: runbook §6/§6.1 (selector, presets, precedencia, modelo explicito).
+- [x] T5 — Tests: selector, precedencia override, backend desconocido, duplicados,
       parseo completo.
-- [ ] T6 — `ruff` + `pytest` + `mypy` + `pyright` + coverage + gate en verde.
+- [x] T6 — `ruff` + `pytest` + `mypy` + `pyright` + coverage + gate en verde.
 
 ## Evidence
 
-- Issue: #43. PR: (pendiente).
+- Issue: #43. PR: #44.
+- Rama: `feat/host-trial-backend-selector` (desde `main`).
 - (pendiente) comandos y salidas reales se pegan en el body del PR.
+- `parse_env_file` sobre el `.env` real del operador (preset LM Studio
+  descomentado debajo del cap viejo) -> `TrialError: duplicate key
+  'OPENAI_BASE_URL' in .env (lines 11 and 43)`. `.env.example` -> 3 claves
+  activas (`HARNESS_MODEL`, `HARNESS_TRIAL_BACKEND`, `OPENAI_API_KEY`).
+- `uv run pytest tests/ -q` -> `161 passed`; ruff/format/mypy/pyright limpios;
+  coverage 98%; `pack submission --check` -> 6/6.
+- Comandos y salidas completas en el body del PR #44.
