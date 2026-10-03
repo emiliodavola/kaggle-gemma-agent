@@ -126,10 +126,17 @@ OPENAI_BASE_URL = "OPENAI_BASE_URL"
 HARNESS_MODEL = "HARNESS_MODEL"
 SESSION_ENV = "HARNESS_TRIAL_SESSION"
 TASKS_ENV = "HARNESS_TRIAL_TASKS"
-ENV_KEYS: tuple[str, ...] = (OPENAI_API_KEY, OPENAI_BASE_URL, HARNESS_MODEL)
-ENV_MAX_LINES = 20
+BACKEND_ENV = "HARNESS_TRIAL_BACKEND"
+ENV_KEYS: tuple[str, ...] = (OPENAI_API_KEY, OPENAI_BASE_URL, HARNESS_MODEL, BACKEND_ENV)
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_BACKEND = "opencode"
+#: Base URL per backend selector; presets live in code so `.env` never repeats a live key.
+BACKEND_PRESETS: dict[str, str] = {
+    "opencode": "https://opencode.ai/zen/go/v1",
+    "dmr": "http://localhost:12434/engines/vllm/v1",
+    "lmstudio": "http://127.0.0.1:1234/v1",
+    "llamacpp": "http://127.0.0.1:8080/v1",
+}
 DEFAULT_HARNESS_MODEL = "deepseek-v4.1-flash"
 
 OPENCODE_SESSION_HEADER = "x-opencode-session"
@@ -206,15 +213,18 @@ def paths_for(repo_root: Path, results_name: str) -> TrialPaths:
     )
 
 
-def parse_env_file(text: str, *, max_lines: int = ENV_MAX_LINES) -> dict[str, str]:
+def parse_env_file(text: str) -> dict[str, str]:
     """Parse ``KEY=VALUE`` lines from a ``.env`` body (no dotenv dependency).
 
     Blank lines and ``#`` comments are skipped, an optional ``export`` prefix is
     accepted, and a single pair of matching quotes is stripped from the value.
-    Only the first *max_lines* lines are read; later keys win on duplicates.
+    The WHOLE file is read (no line cap); an active key defined twice raises
+    ``TrialError`` naming the key and both line numbers, so a colliding preset
+    can never be silently ignored or silently overwrite the active value.
     """
     values: dict[str, str] = {}
-    for raw in text.splitlines()[:max_lines]:
+    first_lines: dict[str, int] = {}
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -224,10 +234,16 @@ def parse_env_file(text: str, *, max_lines: int = ENV_MAX_LINES) -> dict[str, st
         key = key.strip()
         if not sep or not key:
             continue
+        if key in values:
+            raise TrialError(
+                f"duplicate key {key!r} in .env (lines {first_lines[key]} and {lineno}); "
+                "keep only one active definition"
+            )
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         values[key] = value
+        first_lines[key] = lineno
     return values
 
 
@@ -244,20 +260,28 @@ def resolve_trial_env(
     env_file_values: Mapping[str, str],
     environ: Mapping[str, str],
     *,
-    base_url: str = DEFAULT_BASE_URL,
     harness_model: str = DEFAULT_HARNESS_MODEL,
 ) -> dict[str, str]:
     """Merge ``.env`` with the real environment, then fill the trial defaults.
 
-    The process environment wins over ``.env`` for every key. Base URL and
-    harness model fall back to their documented trial defaults.
+    The process environment wins over ``.env`` for every key.
+    ``HARNESS_TRIAL_BACKEND`` selects the base URL from :data:`BACKEND_PRESETS`;
+    an explicit ``OPENAI_BASE_URL`` overrides that preset. ``HARNESS_MODEL`` stays
+    explicit (each server exposes its own id) and falls back to its trial default.
+    An unknown backend fails fast listing the valid values.
     """
     resolved: dict[str, str] = {}
     for name in ENV_KEYS:
         value = environ.get(name) or env_file_values.get(name)
         if value:
             resolved[name] = value
-    resolved.setdefault(OPENAI_BASE_URL, base_url)
+    backend = resolved.get(BACKEND_ENV, DEFAULT_BACKEND).strip().lower()
+    if backend not in BACKEND_PRESETS:
+        raise TrialError(
+            f"unknown {BACKEND_ENV}={backend!r}; valid values: {', '.join(sorted(BACKEND_PRESETS))}"
+        )
+    resolved[BACKEND_ENV] = backend
+    resolved.setdefault(OPENAI_BASE_URL, BACKEND_PRESETS[backend])
     resolved.setdefault(HARNESS_MODEL, harness_model)
     return resolved
 
@@ -1584,6 +1608,7 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
         f"{OPENAI_API_KEY} is set (value not shown: {mask_secret(resolved[OPENAI_API_KEY])}); "
         f"base URL: {resolved[OPENAI_BASE_URL]}"
     )
+    note(f"trial backend: {resolved[BACKEND_ENV]} -> {resolved[OPENAI_BASE_URL]}")
     note(f"{HARNESS_MODEL}: {resolved[HARNESS_MODEL]} (trial-only; not part of the submission)")
     note(f"trial session: {resolved[SESSION_ENV]} -> {OPENCODE_SESSION_HEADER} header")
     note(f"trial tasks: {', '.join(task_ids)}")

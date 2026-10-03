@@ -24,9 +24,10 @@ uv run --script scripts/host-trial/run_host_trial.py run_01
 
 Backend settings come from the process environment or a git-ignored `.env` in
 the repo root (the real environment wins). Copy `.env.example` and fill it in;
-`OPENAI_API_KEY` is required and never echoed (masked). `OPENAI_BASE_URL`
-defaults to `https://opencode.ai/zen/go/v1`; `HARNESS_MODEL` is the trial-only
-opencode model id (meaningless for the Kaggle submission).
+`OPENAI_API_KEY` is required and never echoed (masked). `HARNESS_TRIAL_BACKEND`
+selects the base URL from a code-side preset table (default `opencode`), and an
+explicit `OPENAI_BASE_URL` overrides that preset. `HARNESS_MODEL` is the
+trial-only model id (meaningless for the Kaggle submission) and stays explicit.
 
 Two backend requirements are handled automatically by phase 7:
 
@@ -313,10 +314,26 @@ the `x-opencode-session` header it adds is ignored by local servers. The LLM
 calls originate in the host `swegemma` process, so a server on the Windows host is
 reachable even though Container A is `network_mode='none'`.
 
+`HARNESS_TRIAL_BACKEND` selects the upstream from a code-side preset table
+(`BACKEND_PRESETS` in the runner), so `.env` never repeats a live key:
+
+| `HARNESS_TRIAL_BACKEND` | base URL |
+| :--- | :--- |
+| `opencode` (default) | `https://opencode.ai/zen/go/v1` |
+| `dmr` | `http://localhost:12434/engines/vllm/v1` |
+| `lmstudio` | `http://127.0.0.1:1234/v1` |
+| `llamacpp` | `http://127.0.0.1:8080/v1` |
+
+Precedence: an explicit `OPENAI_BASE_URL` wins over the selector preset, which
+wins over the `opencode` default. `HARNESS_MODEL` stays explicit because each
+server exposes its own id. An unknown selector fails fast listing the valid
+values. The runner reads the **whole** `.env` (no 20-line cap) and aborts if an
+active key is defined twice, naming the key and both line numbers.
+
 `.env` for a local backend:
 
 ```dotenv
-OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+HARNESS_TRIAL_BACKEND=lmstudio
 OPENAI_API_KEY=sk-local-not-used
 HARNESS_MODEL=<exact model id the server exposes>
 ```
@@ -338,11 +355,13 @@ HARNESS_MODEL=<exact model id the server exposes>
   OpenAI API expects, confirmed by
   `curl -s http://localhost:12434/engines/vllm/v1/models`.
 
-  The OpenAI base URL is per-engine:
+  The OpenAI base URL is per-engine; `HARNESS_TRIAL_BACKEND=dmr` selects the vLLM
+  engine used by this safetensors model:
 
   ```dotenv
-  OPENAI_BASE_URL=http://localhost:12434/engines/vllm/v1   # safetensors (this model)
-  # OPENAI_BASE_URL=http://localhost:12434/engines/llama.cpp/v1   # GGUF
+  HARNESS_TRIAL_BACKEND=dmr   # -> http://localhost:12434/engines/vllm/v1
+  # For the GGUF engine override explicitly:
+  # OPENAI_BASE_URL=http://localhost:12434/engines/llama.cpp/v1
   ```
 
   If the trial runs **inside a container** instead of the host, use

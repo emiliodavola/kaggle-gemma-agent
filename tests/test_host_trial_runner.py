@@ -35,7 +35,7 @@ def test_parse_env_file_handles_comments_quotes_and_export() -> None:
         "OPENAI_API_KEY=plain-value\n"
         "export OPENAI_BASE_URL=https://example.test/v1\n"
         "HARNESS_MODEL='quoted model'\n"
-        'HARNESS_MODEL="last wins"\n'
+        'DOUBLE="quoted value"\n'
         "NO_EQUALS_HERE\n"
         "EMPTY=\n"
     )
@@ -43,20 +43,41 @@ def test_parse_env_file_handles_comments_quotes_and_export() -> None:
     assert runner.parse_env_file(text) == {
         "OPENAI_API_KEY": "plain-value",
         "OPENAI_BASE_URL": "https://example.test/v1",
-        "HARNESS_MODEL": "last wins",
+        "HARNESS_MODEL": "quoted model",
+        "DOUBLE": "quoted value",
         "EMPTY": "",
     }
 
 
-def test_parse_env_file_caps_lines_at_twenty() -> None:
+def test_parse_env_file_reads_beyond_line_twenty() -> None:
     text = "\n".join(f"KEY{i:02d}=value{i}" for i in range(25))
 
     parsed = runner.parse_env_file(text)
 
-    assert len(parsed) == 20
+    assert len(parsed) == 25
     assert parsed["KEY00"] == "value0"
-    assert parsed["KEY19"] == "value19"
-    assert "KEY20" not in parsed
+    assert parsed["KEY24"] == "value24"
+
+
+def test_parse_env_file_rejects_a_duplicate_active_key() -> None:
+    text = "OPENAI_API_KEY=first\nHARNESS_MODEL=a\nOPENAI_API_KEY=second\n"
+
+    with pytest.raises(
+        runner.TrialError,
+        match=r"duplicate key 'OPENAI_API_KEY' in .env \(lines 1 and 3\)",
+    ):
+        runner.parse_env_file(text)
+
+
+def test_load_env_file_rejects_a_duplicate_beyond_the_old_cap(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "OPENAI_API_KEY=active\n" + "\n" * 25 + "OPENAI_API_KEY=late-preset\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(runner.TrialError, match="duplicate key 'OPENAI_API_KEY'"):
+        runner.load_env_file(env_file)
 
 
 def test_load_env_file_absent_and_present(tmp_path: Path) -> None:
@@ -75,15 +96,56 @@ def test_resolve_trial_env_prefers_environment_and_fills_defaults() -> None:
 
     assert resolved["OPENAI_API_KEY"] == "env-key"
     assert resolved["HARNESS_MODEL"] == "file-model"
-    assert resolved["OPENAI_BASE_URL"] == runner.DEFAULT_BASE_URL
+    assert resolved[runner.BACKEND_ENV] == runner.DEFAULT_BACKEND
+    assert resolved["OPENAI_BASE_URL"] == runner.BACKEND_PRESETS[runner.DEFAULT_BACKEND]
 
 
 def test_resolve_trial_env_applies_defaults_when_empty() -> None:
-    resolved = runner.resolve_trial_env({}, {}, base_url="https://custom.test", harness_model="m")
+    resolved = runner.resolve_trial_env({}, {}, harness_model="m")
 
-    assert resolved[runner.OPENAI_BASE_URL] == "https://custom.test"
+    assert resolved[runner.OPENAI_BASE_URL] == runner.BACKEND_PRESETS[runner.DEFAULT_BACKEND]
     assert resolved[runner.HARNESS_MODEL] == "m"
     assert runner.OPENAI_API_KEY not in resolved
+
+
+def test_resolve_trial_env_default_backend_is_opencode() -> None:
+    resolved = runner.resolve_trial_env({}, {})
+
+    assert resolved[runner.BACKEND_ENV] == "opencode"
+    assert resolved[runner.OPENAI_BASE_URL] == "https://opencode.ai/zen/go/v1"
+
+
+def test_resolve_trial_env_selects_the_lmstudio_preset() -> None:
+    resolved = runner.resolve_trial_env({"HARNESS_TRIAL_BACKEND": "lmstudio"}, {})
+
+    assert resolved[runner.BACKEND_ENV] == "lmstudio"
+    assert resolved[runner.OPENAI_BASE_URL] == "http://127.0.0.1:1234/v1"
+
+
+def test_resolve_trial_env_normalizes_the_backend_selector() -> None:
+    resolved = runner.resolve_trial_env({"HARNESS_TRIAL_BACKEND": " LmStudio "}, {})
+
+    assert resolved[runner.BACKEND_ENV] == "lmstudio"
+
+
+def test_resolve_trial_env_explicit_base_url_wins_over_the_selector() -> None:
+    resolved = runner.resolve_trial_env(
+        {
+            "HARNESS_TRIAL_BACKEND": "lmstudio",
+            "OPENAI_BASE_URL": "https://explicit.test/v1",
+        },
+        {},
+    )
+
+    assert resolved[runner.OPENAI_BASE_URL] == "https://explicit.test/v1"
+
+
+def test_resolve_trial_env_rejects_an_unknown_backend() -> None:
+    with pytest.raises(
+        runner.TrialError,
+        match=r"unknown HARNESS_TRIAL_BACKEND='nope'; valid values:",
+    ):
+        runner.resolve_trial_env({"HARNESS_TRIAL_BACKEND": "nope"}, {})
 
 
 def test_mask_secret_never_returns_the_secret() -> None:
@@ -108,13 +170,33 @@ def test_resolve_backend_env_masks_key_and_sets_default_session(
     monkeypatch.setenv(runner.OPENAI_API_KEY, "super-secret-key")
     monkeypatch.delenv(runner.OPENAI_BASE_URL, raising=False)
     monkeypatch.delenv(runner.HARNESS_MODEL, raising=False)
+    monkeypatch.delenv(runner.BACKEND_ENV, raising=False)
     monkeypatch.delenv(runner.SESSION_ENV, raising=False)
 
     resolved = runner.resolve_backend_env(tmp_path / "absent.env")
 
+    assert resolved[runner.BACKEND_ENV] == runner.DEFAULT_BACKEND
+    assert resolved[runner.OPENAI_BASE_URL] == runner.BACKEND_PRESETS[runner.DEFAULT_BACKEND]
     assert resolved[runner.SESSION_ENV] == runner.DEFAULT_TRIAL_SESSION
     assert resolved[runner.HARNESS_MODEL] == runner.DEFAULT_HARNESS_MODEL
     assert os.environ[runner.OPENAI_API_KEY] == "super-secret-key"
+
+
+def test_resolve_backend_env_notes_the_selected_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(runner.OPENAI_API_KEY, "super-secret-key")
+    monkeypatch.setenv(runner.BACKEND_ENV, "lmstudio")
+    monkeypatch.delenv(runner.OPENAI_BASE_URL, raising=False)
+    monkeypatch.delenv(runner.HARNESS_MODEL, raising=False)
+
+    resolved = runner.resolve_backend_env(tmp_path / "absent.env")
+
+    assert resolved[runner.OPENAI_BASE_URL] == runner.BACKEND_PRESETS["lmstudio"]
+    out = capsys.readouterr().out
+    assert "trial backend: lmstudio -> http://127.0.0.1:1234/v1" in out
 
 
 def test_provider_qualified_model_adds_prefix_once() -> None:
