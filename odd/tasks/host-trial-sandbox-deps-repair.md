@@ -50,5 +50,11 @@ Decisiones tomadas con el usuario:
 
 ## Evidence
 
-- Issue: #41. PR: (pendiente).
-- (pendiente) comandos y salidas reales se pegan en el body del PR.
+- Issue: #41. PR: #42.
+- Rama: `feat/host-trial-sandbox-deps-repair` (desde `main`, con #40 ya mergeado).
+- `--repair-sandbox-deps` default off; on mergea extras + descarga core faltante.
+- Cierre core real (snapshot `fastapi_14962.tgz`): sin extras
+  `{annotated-doc, typing-inspection}`; con extras `{}`.
+- `uv run pytest tests/ -q` -> `153 passed`; `ruff`/`format`/`mypy`/`pyright`
+  limpios; coverage 98%; `pack submission --check` -> 6/6.
+- Comandos y salidas completas en el body del PR #42.
