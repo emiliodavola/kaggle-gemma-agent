@@ -38,15 +38,15 @@ Decisiones tomadas con el usuario:
 
 ## Tasks
 
-- [ ] T1 — Runner: `download_missing_wheels(names, dest_dir)` + constantes
+- [x] T1 — Runner: `download_missing_wheels(names, dest_dir)` + constantes
       `PIP_DOWNLOAD_CMD` / `PIP_CONTAINER_TARGET`.
-- [ ] T2 — Runner: `ensure_trial_wheels(..., repair=False)`; gatea el merge de
+- [x] T2 — Runner: `ensure_trial_wheels(..., repair=False)`; gatea el merge de
       suplementarios y, con `repair`, descarga + re-mergea + re-chequea el core.
-- [ ] T3 — Runner: flag `--repair-sandbox-deps` en `main` y `run`.
-- [ ] T4 — Tests: off no mergea; on mergea; on descarga y cierra el gap (mock);
+- [x] T3 — Runner: flag `--repair-sandbox-deps` en `main` y `run`.
+- [x] T4 — Tests: off no mergea; on mergea; on descarga y cierra el gap (mock);
       off falla rapido.
-- [ ] T5 — Docs: runbook §6.2 (fiel vs reparado, flag, link a la discusion).
-- [ ] T6 — `ruff` + `pytest` + `mypy` + `pyright` + coverage + gate en verde.
+- [x] T5 — Docs: runbook §6.2 (fiel vs reparado, flag, link a la discusion).
+- [x] T6 — `ruff` + `pytest` + `mypy` + `pyright` + coverage + gate en verde.
 
 ## Evidence
 
