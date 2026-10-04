@@ -801,6 +801,8 @@ def test_smoke_test_backend_posts_tool_aware_completion(
     payload = json.loads(request.data)
     assert payload["model"] == "my-model"
     assert payload["tools"][0]["function"]["name"] == "noop"
+    assert payload["max_tokens"] == runner.SMOKE_MAX_TOKENS
+    assert payload["max_tokens"] > 16
 
 
 def test_smoke_test_backend_accepts_a_tool_call_reply(
@@ -815,6 +817,20 @@ def test_smoke_test_backend_accepts_a_tool_call_reply(
     )
 
     assert runner.smoke_test_backend("http://x", "m", "k") == "tool call returned"
+
+
+def test_smoke_test_backend_accepts_a_reasoning_only_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runner.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeResponse(
+            b'{"choices":[{"message":{"content":"","reasoning_content":"thinking"}}]}'
+        ),
+    )
+
+    assert runner.smoke_test_backend("http://x", "m", "k") == "reasoning-only reply"
 
 
 def test_smoke_test_backend_reports_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
