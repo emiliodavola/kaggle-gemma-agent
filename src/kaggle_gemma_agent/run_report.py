@@ -502,19 +502,55 @@ def _test_sets(
     return _annotate_required(fail_nodes, outcomes), _annotate_required(pass_nodes, outcomes)
 
 
-def _infer_resolved(record: Mapping[str, Any], junit: Mapping[str, Any] | None) -> bool | None:
-    """Infer a task verdict from the record, falling back to JUnit counts."""
-    explicit = _coerce_bool(_first(record, _RESOLVED_KEYS))
-    if explicit is not None:
-        return explicit
-    if junit is None:
-        return None
+def _junit_verdict(junit: Mapping[str, Any]) -> bool:
+    """Return ``True`` only when JUnit shows passing tests and nothing else."""
     return bool(
         junit.get("passed", 0) > 0
         and junit.get("failures", 0) == 0
         and junit.get("errors", 0) == 0
         and junit.get("skipped", 0) == 0
     )
+
+
+def _failure_evidence(text: str) -> bool:
+    """Return ``True`` when *text* shows a recognizable test failure.
+
+    A benign log (``_classify_failure`` returns ``None`` or ``"unknown"``) is not
+    evidence: a task with no verdict then stays ``unknown`` instead of being
+    invented as failed.
+    """
+    return _classify_failure(text) not in (None, "unknown")
+
+
+def _infer_verdict(
+    record: Mapping[str, Any], junit: Mapping[str, Any] | None, task_dir: Path
+) -> tuple[bool | None, str]:
+    """Infer ``(resolved, source)`` for a task from every archived signal.
+
+    ``source`` names the signal that decided the verdict:
+
+    * ``"record"`` — an explicit ``resolved``/``passed`` field in the result line.
+    * ``"junit"`` — JUnit test counts.
+    * ``"test_output"`` — a classified failure or a missing module in the
+      archived ``test_output.log`` (tests ran but no verdict was recorded).
+    * ``"none"`` — no usable evidence, so the verdict stays unknown.
+    """
+    explicit = _coerce_bool(_first(record, _RESOLVED_KEYS))
+    if explicit is not None:
+        return explicit, "record"
+    if junit is not None:
+        return _junit_verdict(junit), "junit"
+    text, _ = _read_tail(task_dir / "test_output.log", FAILURE_TAIL_CHARS)
+    if _failure_evidence(text) or _missing_modules(task_dir, "fail"):
+        return False, "test_output"
+    return None, "none"
+
+
+def _infer_resolved(
+    record: Mapping[str, Any], junit: Mapping[str, Any] | None, task_dir: Path
+) -> bool | None:
+    """Return only the inferred verdict (thin wrapper over :func:`_infer_verdict`)."""
+    return _infer_verdict(record, junit, task_dir)[0]
 
 
 _COLLECTION_ERROR_MARKERS: tuple[str, ...] = (
@@ -595,7 +631,7 @@ def _build_task(
     instance_id = task_dir.name
     junit_path = task_dir / "junit.xml"
     junit = parse_junit(junit_path) if junit_path.is_file() else None
-    resolved = _infer_resolved(record, junit)
+    resolved, verdict_source = _infer_verdict(record, junit, task_dir)
     fail_to_pass, pass_to_pass = _test_sets(record, meta, junit)
 
     patch_path = task_dir / "agent_patch.diff"
@@ -603,6 +639,8 @@ def _build_task(
     backend = _first(record, _BACKEND_KEYS)
     status = "unknown" if resolved is None else ("pass" if resolved else "fail")
     failure_kind = _failure_kind(task_dir, status)
+    missing_modules = _missing_modules(task_dir, status)
+    infra_error = status != "pass" and bool(missing_modules)
 
     return {
         "instance_id": instance_id,
@@ -615,6 +653,8 @@ def _build_task(
         "turns_budget": budget_turns,
         "resolved": resolved,
         "status": status,
+        "verdict_source": verdict_source,
+        "infra_error": infra_error,
         "junit": junit,
         "fail_to_pass": fail_to_pass,
         "pass_to_pass": pass_to_pass,
@@ -625,7 +665,7 @@ def _build_task(
         else (f"{instance_id}/agent_patch.diff" if patch_path.is_file() else None),
         "artifacts": _artifact_index(task_dir, run_dir),
         "failure_kind": failure_kind,
-        "missing_modules": _missing_modules(task_dir, status),
+        "missing_modules": missing_modules,
         "failure_tail": _failure_tail(task_dir) if status != "pass" else None,
     }
 
@@ -686,6 +726,7 @@ def build_report(
 
     resolved = sum(1 for task in tasks if task["resolved"] is True)
     unknown = sum(1 for task in tasks if task["resolved"] is None)
+    measured = len(tasks) - unknown
     rate = (resolved / len(tasks)) if tasks else None
     wall = [task["wall_seconds"] for task in tasks if task["wall_seconds"] is not None]
     tool_calls = [task["tool_calls"] for task in tasks if task["tool_calls"] is not None]
@@ -699,22 +740,21 @@ def build_report(
         if isinstance(summary_errors, list) and summary_errors:
             reasons.append(f"{len(summary_errors)} harness error(s)")
     if unknown:
-        reasons.append(f"{unknown} task(s) without verdict")
+        reasons.append(f"{measured} of {len(tasks)} task(s) measured ({unknown} without verdict)")
 
-    module_tasks: dict[str, int] = {}
+    module_tasks: dict[str, list[str]] = {}
     for task in tasks:
         if task.get("status") == "pass":
             continue
         for module in task.get("missing_modules", []):
-            module_tasks[module] = module_tasks.get(module, 0) + 1
+            module_tasks.setdefault(module, []).append(str(task["instance_id"]))
+    for ids in module_tasks.values():
+        ids.sort()
     missing_modules = sorted(module_tasks)
-    environment_blocked = False
-    for module, count in sorted(module_tasks.items()):
-        if count >= 2:
-            environment_blocked = True
-            reasons.append(
-                f"environment failure: missing module(s) {module} ({count}/{len(tasks)} tasks)"
-            )
+    environment_blocked = bool(module_tasks)
+    for module in missing_modules:
+        ids = module_tasks[module]
+        reasons.append(f"environment failure: missing module(s) {module} (tasks: {', '.join(ids)})")
 
     status = STATUS_BLOCKED if not tasks else (STATUS_PARTIAL if reasons else STATUS_DONE)
 
@@ -727,6 +767,7 @@ def build_report(
         "status_reasons": reasons,
         "environment_blocked": environment_blocked,
         "missing_modules": missing_modules,
+        "missing_module_tasks": module_tasks,
         "env": env,
         "budgets": dict(budget_map),
         "totals": {
@@ -734,6 +775,7 @@ def build_report(
             "resolved": resolved,
             "unresolved": len(tasks) - resolved - unknown,
             "unknown": unknown,
+            "measured": measured,
             "resolution_rate": rate,
             "wall_seconds": sum(wall) if wall else None,
             "tool_calls": sum(tool_calls) if tool_calls else None,
@@ -770,6 +812,12 @@ def render_summary(report: Mapping[str, Any]) -> str:
     wall_text = f"{wall / 60:.1f}" if isinstance(wall, (int, float)) else "n/a"
     tool_calls = totals.get("tool_calls")
     turns = totals.get("turns")
+    unknown = _coerce_int(totals.get("unknown", 0)) or 0
+    measured_text = ""
+    if unknown:
+        measured = _coerce_int(totals.get("measured"))
+        measured = tasks - unknown if measured is None else measured
+        measured_text = f" | measured {measured}/{tasks}"
     failed = [
         task["instance_id"] for task in report.get("tasks", []) if task.get("status") != "pass"
     ]
@@ -796,7 +844,7 @@ def render_summary(report: Mapping[str, Any]) -> str:
         f"run {report.get('run_id', '?')} | backend {env.get('backend', 'unknown')} "
         f"| docker {env.get('docker', 'unknown')} | os {env.get('os', 'unknown')}{mode_text}",
         f"tasks {tasks} | resolved {totals.get('resolved', 0)} | rate {rate_text} "
-        f"| unknown {totals.get('unknown', 0)}",
+        f"| unknown {totals.get('unknown', 0)}{measured_text}",
         f"tool_calls {tool_calls}/{_budget_total('tool_calls')} "
         f"| wall {wall_text}/{_budget_total('time_minutes')} min "
         f"| turns {turns}/{_budget_total('turns')}",

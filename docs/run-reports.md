@@ -54,11 +54,12 @@ Top-level keys:
 | `generated_at` | `str` | ISO-8601 UTC timestamp. |
 | `status` | `str` | `DONE` / `BLOCKED` / `PARTIAL` (see §3). |
 | `status_reasons` | `list[str]` | Why `PARTIAL`/`BLOCKED` was chosen (empty for `DONE`). |
-| `environment_blocked` | `bool` | `true` when the **same** missing module appears in `>= 2` failing tasks (a uniform environment gap, not agent performance). |
+| `environment_blocked` | `bool` | `true` when any non-passing task is missing a module (an environment/collection gap, not agent performance). |
 | `missing_modules` | `list[str]` | Sorted union of every `No module named '...'` module across failing tasks. |
+| `missing_module_tasks` | `object` | `{module: [instance_id, ...]}` mapping each missing module to the sorted ids of the tasks that miss it. |
 | `env` | `object` | Host/backend names — **never credential values** (see §7). |
 | `budgets` | `object` | Per-task budgets: `tool_calls` 100, `time_minutes` 60, `turns` 500. |
-| `totals` | `object` | `tasks`, `resolved`, `unresolved`, `unknown`, `resolution_rate`, `wall_seconds`, `tool_calls`, `turns`. |
+| `totals` | `object` | `tasks`, `resolved`, `unresolved`, `unknown`, `measured`, `resolution_rate`, `wall_seconds`, `tool_calls`, `turns`. |
 | `summary` | `object` | Echo of `summary.json` (`resolution_rate`, `resolved`, `total`) or `null`s. |
 | `notes` | `list[str]` | Non-fatal parse notes (e.g. `task_results.jsonl:3 invalid JSON`). |
 | `tasks` | `list[object]` | Task records (first chunk when split; see §6). |
@@ -76,8 +77,10 @@ Top-level keys:
 | `wall_seconds` | `float \| null` | `agent_elapsed_seconds` / `elapsed_seconds` / … |
 | `tool_calls` / `tool_calls_budget` | `int \| null` / `int` | vs the 100-call budget. |
 | `turns` / `turns_budget` | `int \| null` / `int` | vs the 500-turn budget. |
-| `resolved` | `bool \| null` | From the result line; else inferred from JUnit. |
+| `resolved` | `bool \| null` | From the result line; else JUnit; else inferred from the archived `test_output.log` (a classified failure or missing module -> `false`). |
 | `status` | `str` | `pass` / `fail` / `unknown`. |
+| `verdict_source` | `str` | Signal that decided the verdict: `record` / `junit` / `test_output` / `none`. |
+| `infra_error` | `bool` | `true` when a non-passing task is missing a module (environment/collection break, not agent performance). |
 | `junit` | `object \| null` | Counts + capped `testcases` when `junit.xml` exists. |
 | `fail_to_pass` | `object \| null` | Expected/observed/passed/failed/missing nodes (JUnit only). |
 | `pass_to_pass` | `object \| null` | Same shape for the passing set. |
@@ -117,14 +120,16 @@ causes, e.g. `failures 2 | kinds collection_error=2 | top: fastapi_15588, ...`.
 That distinguishes an environment/collection failure from an assertion failure
 without opening `failure_tail`; the per-task value is `failure_kind` above.
 
-When the same missing module appears in `>= 2` failing tasks, `environment_blocked`
-is set and the `failures` line additionally carries `| env missing: <names>`,
-e.g. `failures 5 | kinds collection_error=5 | env missing: typing_inspection | top: ...`.
-The matching `status_reasons` entry reads
-`environment failure: missing module(s) typing_inspection (5/5 tasks)`, so a
-uniform dependency gap (the competition wheel set is incomplete, see
-`docs/host-trial-runbook.md` §6.2) is not mistaken for agent performance. A single
-task or two tasks with *different* modules does not set the flag.
+When any non-passing task is missing a module, `environment_blocked` is set and
+the `failures` line additionally carries `| env missing: <names>`, e.g.
+`failures 5 | kinds collection_error=5 | env missing: typing_inspection | top: ...`.
+Each matching `status_reasons` entry names the affected tasks, e.g.
+`environment failure: missing module(s) typing_inspection (tasks: fastapi_14962)`,
+and `missing_module_tasks` maps every module to its task ids, so a dependency gap
+(the competition wheel set is incomplete, see `docs/host-trial-runbook.md` §6.2)
+is not mistaken for agent performance. A task with archived failure evidence and
+no recorded verdict counts as failed (`verdict_source: "test_output"`), and the
+`tasks` line reports `| measured m/t` while any task stays unknown.
 
 Status selection:
 
