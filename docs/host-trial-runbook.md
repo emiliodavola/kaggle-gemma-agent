@@ -527,6 +527,36 @@ lacks them too, so fetching them would make the local trial less faithful than
 the scored environment. `--allow-incomplete-wheels` remains the explicit bypass
 for a deliberate offline run.
 
+### 6.3 Launching the local model — `serve_local_model.py`
+
+The model servers usually run on the **Windows host** while the runner runs in
+**WSL**. `scripts/host-trial/serve_local_model.py` builds the exact command and
+(unless `--dry-run`) launches it, then waits for `/v1/models`. WSL2
+interoperability runs the Windows binaries (`lms.exe`, `llama-server.exe`) and
+mirrored networking makes the host `127.0.0.1` reachable, so the same script
+works from either side. Nothing here ships in the submission.
+
+```bash
+# show the exact command without running anything
+HARNESS_TRIAL_BACKEND=llamacpp HARNESS_TRIAL_MODEL_PATH=/models/gemma.gguf \
+  uv run python scripts/host-trial/serve_local_model.py start --context 26214 --dry-run
+```
+
+- **LM Studio**: `lms server start` then `lms load <key> --context-length <ctx>
+  --gpu max -y --identifier <HARNESS_MODEL>`. Stop with `unload --all` + `server stop`.
+- **llama.cpp**: `llama-server -m <gguf> -c <ctx> -ngl all --jinja --alias
+  <HARNESS_MODEL> --host <host> --port <port> -fa on -ctk q8_0 -ctv q8_0`
+  (`--jinja` is required for tool calling; `-fa` + quantized KV cache buy context
+  headroom on a 24 GB card).
+
+The runner calls it when `HARNESS_TRIAL_LAUNCH` is set (or with `--launch-model`):
+it starts before the eval and stops afterwards (`--keep-model` leaves it running).
+Context default 26214 (the scored ceiling is 32768; see §6.1). Env vars:
+`HARNESS_TRIAL_LAUNCH`, `HARNESS_TRIAL_CONTEXT`, `HARNESS_TRIAL_MODEL_KEY`,
+`HARNESS_TRIAL_MODEL_PATH`, `HARNESS_TRIAL_GPU`, `HARNESS_TRIAL_GPU_LAYERS`,
+`HARNESS_TRIAL_SERVER_HOST`, `HARNESS_TRIAL_SERVER_PORT`, `HARNESS_TRIAL_LMS_BIN`,
+`HARNESS_TRIAL_LLAMACPP_BIN`.
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
