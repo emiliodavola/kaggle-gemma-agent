@@ -557,6 +557,10 @@ Context default 26214 (the scored ceiling is 32768; see §6.1). Env vars:
 `HARNESS_TRIAL_SERVER_HOST`, `HARNESS_TRIAL_SERVER_PORT`, `HARNESS_TRIAL_LMS_BIN`,
 `HARNESS_TRIAL_LLAMACPP_BIN`.
 
+Values are read from `<repo root>/.env` first and then the process environment (the
+process env wins), so running the launcher directly behaves like the runner;
+`--env-file <path>` overrides the file location.
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
