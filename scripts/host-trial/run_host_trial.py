@@ -692,9 +692,10 @@ def build_archive_args(
     junit_dir: Path,
     tasks_file: Path,
     backend: str = BACKEND_ALIAS,
+    sandbox_deps_mode: str | None = None,
 ) -> list[str]:
     """Build the ``harness_runs archive`` argv."""
-    return [
+    args = [
         *HARNESS_RUNS,
         "archive",
         str(results_dir),
@@ -705,6 +706,9 @@ def build_archive_args(
         "--backend",
         backend,
     ]
+    if sandbox_deps_mode is not None:
+        args += ["--sandbox-deps-mode", sandbox_deps_mode]
+    return args
 
 
 def build_report_args(run_dir: Path) -> list[str]:
@@ -1449,9 +1453,12 @@ def ensure_trial_wheels(
     unavailable (offline host or rate-limited listing) but some wheels are
     already staged, the phase **fails fast** unless *allow_partial* is set: an
     unverified/partial set can poison the swegemma site-packages cache and score
-    0/2 with a container missing its dependencies. A listing that succeeds but is
-    empty is still an error: it means the competition has no ``wheels/`` to
-    stage. *sleep* is injectable for tests.
+    0/2 with a container missing its dependencies. With *allow_partial* the
+    remote staging step is skipped, but the supplemental merge (*repair*) and the
+    core-closure check/download still run, so a fallen listing cannot silently
+    disable the sandbox-deps repair. A listing that succeeds but is empty is
+    still an error: it means the competition has no ``wheels/`` to stage. *sleep*
+    is injectable for tests.
 
     After staging, wheels from *extra_dirs* are merged in, and when *snapshots*
     is given the dependency closure of each repo's declared requirements is
@@ -1472,17 +1479,19 @@ def ensure_trial_wheels(
     sleeper = sleep or time.sleep
 
     staged = _staged_wheel_names(paths.wheels_dir)
+    listing_unavailable = False
     try:
         remote_wheels = _list_competition_wheels()
     except TrialError as exc:
         if staged and allow_partial:
+            listing_unavailable = True
+            remote_wheels = []
             note(
                 f"warning: could not list remote wheels ({exc}); continuing with "
                 f"{len(staged)} staged wheel(s) in {paths.wheels_dir} "
                 "(--allow-partial-wheels)"
             )
-            return
-        if staged:
+        elif staged:
             raise TrialError(
                 f"cannot verify the local wheel set ({len(staged)} staged in "
                 f"{paths.wheels_dir}): the competition wheel listing failed ({exc}). "
@@ -1490,27 +1499,32 @@ def ensure_trial_wheels(
                 "to proceed with the unverified set (an incomplete set can poison the "
                 "swegemma site-packages cache)."
             ) from exc
-        raise
+        else:
+            raise
 
-    if not remote_wheels:
-        raise TrialError(
-            f"no files under '{WHEELS_DIRNAME}' in competition {COMPETITION}; "
-            "cannot stage the trial dependency wheels."
-        )
+    if not listing_unavailable:
+        if not remote_wheels:
+            raise TrialError(
+                f"no files under '{WHEELS_DIRNAME}' in competition {COMPETITION}; "
+                "cannot stage the trial dependency wheels."
+            )
 
-    missing = [remote for remote in remote_wheels if Path(remote).name not in staged]
-    if missing:
-        note(
-            f"staging {len(missing)}/{len(remote_wheels)} wheel(s) into {paths.wheels_dir} "
-            f"({len(remote_wheels) - len(missing)} already present)"
-        )
-        paths.wheels_dir.mkdir(parents=True, exist_ok=True)
-        for index, remote_file in enumerate(missing):
-            _fetch_competition_file(remote_file, paths.wheels_dir, sleep=sleep)
-            if index < len(missing) - 1:
-                sleeper(WHEEL_DOWNLOAD_PAUSE_SECONDS)
-    else:
-        note(f"skip (complete): {len(remote_wheels)} wheel(s) already staged in {paths.wheels_dir}")
+        missing = [remote for remote in remote_wheels if Path(remote).name not in staged]
+        if missing:
+            note(
+                f"staging {len(missing)}/{len(remote_wheels)} wheel(s) into "
+                f"{paths.wheels_dir} ({len(remote_wheels) - len(missing)} already present)"
+            )
+            paths.wheels_dir.mkdir(parents=True, exist_ok=True)
+            for index, remote_file in enumerate(missing):
+                _fetch_competition_file(remote_file, paths.wheels_dir, sleep=sleep)
+                if index < len(missing) - 1:
+                    sleeper(WHEEL_DOWNLOAD_PAUSE_SECONDS)
+        else:
+            note(
+                f"skip (complete): {len(remote_wheels)} wheel(s) already staged "
+                f"in {paths.wheels_dir}"
+            )
 
     if repair:
         merged = merge_supplemental_wheels(paths.wheels_dir, extra_dirs)
@@ -1678,7 +1692,9 @@ def run_eval(
             os.environ[OPENAI_BASE_URL] = previous_base_url
 
 
-def archive_and_report(paths: TrialPaths, backend: str) -> Path:
+def archive_and_report(
+    paths: TrialPaths, backend: str, sandbox_deps_mode: str | None = None
+) -> Path:
     """Phase 8: archive into ``runs/<UTC>/`` and print the report."""
     phase("Phase 8/8 (runbook sec. 7-9): archive + report under runs/")
     note("JUnit note (runbook sec. 8): the harness writes JUnit XML only inside Container B")
@@ -1690,7 +1706,13 @@ def archive_and_report(paths: TrialPaths, backend: str) -> Path:
 
     paths.junit_dir.mkdir(parents=True, exist_ok=True)
     run_cmd(
-        build_archive_args(paths.results_dir, paths.junit_dir, paths.tasks_file, backend),
+        build_archive_args(
+            paths.results_dir,
+            paths.junit_dir,
+            paths.tasks_file,
+            backend,
+            sandbox_deps_mode,
+        ),
         what="harness_runs archive",
     )
 
@@ -1736,7 +1758,11 @@ def run(
     build_image(paths)
     env = resolve_backend_env(env_file)
     run_eval(paths, env, skip_backend_smoke=skip_backend_smoke)
-    return archive_and_report(paths, env[HARNESS_MODEL])
+    return archive_and_report(
+        paths,
+        env[HARNESS_MODEL],
+        sandbox_deps_mode="repaired" if repair_sandbox_deps else "faithful",
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
