@@ -60,6 +60,32 @@ def test_archive_run_rekeys_artifacts_and_writes_manifest(tmp_path: Path) -> Non
     assert "junit.xml" not in meta["artifacts"]
 
 
+def test_archive_run_records_sandbox_deps_mode(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+
+    run_dir = harness_runs.archive_run(
+        results,
+        runs_root=tmp_path / "runs",
+        timestamp="repaired",
+        finalize=False,
+        sandbox_deps_mode="repaired",
+    )
+
+    manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["sandbox_deps_mode"] == "repaired"
+
+
+def test_archive_run_records_absent_sandbox_deps_mode_as_none(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+
+    run_dir = harness_runs.archive_run(
+        results, runs_root=tmp_path / "runs", timestamp="faithful", finalize=False
+    )
+
+    manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["sandbox_deps_mode"] is None
+
+
 def test_archive_run_folds_in_junit_xml(tmp_path: Path) -> None:
     results = _make_results(tmp_path)
     junit = tmp_path / "junit"

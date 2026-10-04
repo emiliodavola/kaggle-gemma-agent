@@ -913,6 +913,15 @@ def test_build_archive_and_report_args() -> None:
     assert archive[:5] == list(runner.HARNESS_RUNS)
     assert archive[5] == "archive"
     assert archive[archive.index("--backend") + 1] == runner.BACKEND_ALIAS
+    assert "--sandbox-deps-mode" not in archive
+
+    repaired = runner.build_archive_args(
+        Path("results/run_01"),
+        Path("junit"),
+        Path("data/raw/tasks.jsonl"),
+        sandbox_deps_mode="repaired",
+    )
+    assert repaired[repaired.index("--sandbox-deps-mode") + 1] == "repaired"
 
     report = runner.build_report_args(Path("runs/20260101T000000Z"))
     assert report == [*runner.HARNESS_RUNS, "report", str(Path("runs/20260101T000000Z"))]
@@ -1461,6 +1470,75 @@ def test_ensure_trial_wheels_repair_off_fails_fast_on_a_missing_core_dependency(
 
     with pytest.raises(runner.TrialError, match="missing-dep"):
         runner.ensure_trial_wheels(paths, snapshots=[snapshot], repair=False)
+
+
+def test_ensure_trial_wheels_allow_partial_still_repairs_merge_and_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0", requires=("missing-dep>=1",))
+    extra = tmp_path / "wheels-extra"
+    added = _write_wheel(extra, "supplemental", "1.0")
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+
+    def failing_list() -> list[str]:
+        raise runner.TrialError("offline")
+
+    monkeypatch.setattr(runner, "_list_competition_wheels", failing_list)
+    monkeypatch.setattr(runner, "_fetch_competition_file", _no_fetch)
+    download_calls: list[tuple[list[str], Path]] = []
+
+    def fake_download(names: list[str], dest: Path) -> list[str]:
+        download_calls.append((list(names), Path(dest)))
+        _write_wheel(Path(dest), "missing_dep", "1.0")
+        return sorted(path.name for path in Path(dest).glob("*.whl"))
+
+    monkeypatch.setattr(runner, "download_missing_wheels", fake_download)
+
+    runner.ensure_trial_wheels(
+        paths, extra_dirs=[extra], snapshots=[snapshot], allow_partial=True, repair=True
+    )
+
+    assert (paths.wheels_dir / added.name).is_file()
+    assert download_calls == [(["missing-dep"], extra)]
+    out = capsys.readouterr().out
+    assert "could not list remote wheels" in out
+    assert "wheel core closure ok" in out
+
+
+def test_ensure_trial_wheels_allow_partial_without_repair_does_not_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = runner.paths_for(tmp_path, "run_01")
+    paths.wheels_dir.mkdir(parents=True)
+    _write_wheel(paths.wheels_dir, "root", "1.0")
+    extra = tmp_path / "wheels-extra"
+    added = _write_wheel(extra, "supplemental", "1.0")
+    snapshot = _write_snapshot(
+        paths.snapshots_dir / "task_a.tgz",
+        pyproject='[project]\nname = "demo"\ndependencies = ["root"]\n',
+    )
+
+    def failing_list() -> list[str]:
+        raise runner.TrialError("offline")
+
+    monkeypatch.setattr(runner, "_list_competition_wheels", failing_list)
+    monkeypatch.setattr(runner, "_fetch_competition_file", _no_fetch)
+    monkeypatch.setattr(
+        runner, "download_missing_wheels", lambda *args, **kwargs: pytest.fail("no fetch")
+    )
+
+    runner.ensure_trial_wheels(
+        paths, extra_dirs=[extra], snapshots=[snapshot], allow_partial=True, repair=False
+    )
+
+    assert not (paths.wheels_dir / added.name).is_file()
+    out = capsys.readouterr().out
+    assert "supplemental wheels not merged" in out
 
 
 def test_download_missing_wheels_builds_the_container_target_command(

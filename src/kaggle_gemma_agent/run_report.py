@@ -158,6 +158,11 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     return loaded if isinstance(loaded, dict) else None
 
 
+def _load_manifest(run_dir: Path) -> dict[str, Any]:
+    """Return ``run_dir/manifest.json`` parsed, or ``{}`` when absent/invalid."""
+    return _load_json(Path(run_dir) / "manifest.json") or {}
+
+
 def _lower_map(mapping: Mapping[str, Any]) -> dict[str, Any]:
     """Return *mapping* keyed by lower-cased names, first occurrence winning."""
     result: dict[str, Any] = {}
@@ -650,6 +655,10 @@ def build_report(
 
     budget_map = {**DEFAULT_BUDGETS, **(budgets or {})}
     summary = _load_json(run_dir / "summary.json")
+    manifest = _load_manifest(run_dir)
+    sandbox_deps_mode = manifest.get("sandbox_deps_mode")
+    if not isinstance(sandbox_deps_mode, str):
+        sandbox_deps_mode = None
     records, notes = _load_task_results(run_dir / "task_results.jsonl")
     env = detect_environment(environ, docker_version=docker_version)
     run_backend = backend or str(env["backend"])
@@ -712,6 +721,7 @@ def build_report(
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_dir.name,
+        "sandbox_deps_mode": sandbox_deps_mode,
         "generated_at": generated_at or datetime.now(UTC).isoformat(),
         "status": status,
         "status_reasons": reasons,
@@ -778,11 +788,13 @@ def render_summary(report: Mapping[str, Any]) -> str:
     if report.get("environment_blocked"):
         env_names = ", ".join(str(name) for name in report.get("missing_modules", []))
         env_text = f" | env missing: {env_names}"
+    mode = report.get("sandbox_deps_mode")
+    mode_text = f" | sandbox-deps {mode}" if isinstance(mode, str) and mode else ""
 
     lines = [
         str(report.get("status", STATUS_BLOCKED)),
         f"run {report.get('run_id', '?')} | backend {env.get('backend', 'unknown')} "
-        f"| docker {env.get('docker', 'unknown')} | os {env.get('os', 'unknown')}",
+        f"| docker {env.get('docker', 'unknown')} | os {env.get('os', 'unknown')}{mode_text}",
         f"tasks {tasks} | resolved {totals.get('resolved', 0)} | rate {rate_text} "
         f"| unknown {totals.get('unknown', 0)}",
         f"tool_calls {tool_calls}/{_budget_total('tool_calls')} "

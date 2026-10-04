@@ -131,6 +131,7 @@ def archive_run(
     backend: str | None = None,
     budgets: Mapping[str, int] | None = None,
     index_path: Path | None = None,
+    sandbox_deps_mode: str | None = None,
 ) -> Path:
     """Archive a ``swegemma --results-dir`` under ``runs_root/<timestamp>/``.
 
@@ -185,6 +186,7 @@ def archive_run(
         "junit_dir": str(junit_root.resolve()) if junit_root is not None else None,
         "task_count": len(tasks),
         "tasks": tasks,
+        "sandbox_deps_mode": sandbox_deps_mode,
     }
     (run_dir / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
@@ -219,6 +221,12 @@ def _main_archive(argv: Sequence[str]) -> int:
     parser.add_argument("--tasks", default=None, type=Path, help="tasks.jsonl for test sets")
     parser.add_argument("--backend", default=None, help="backend/model name for the report")
     parser.add_argument(
+        "--sandbox-deps-mode",
+        choices=("faithful", "repaired"),
+        default=None,
+        help="sandbox-deps mode recorded in the manifest (faithful | repaired)",
+    )
+    parser.add_argument(
         "--no-report",
         action="store_true",
         help="archive artifacts only; skip report.json/STATUS/index.jsonl",
@@ -234,6 +242,7 @@ def _main_archive(argv: Sequence[str]) -> int:
             finalize=not args.no_report,
             tasks_path=args.tasks,
             backend=args.backend,
+            sandbox_deps_mode=args.sandbox_deps_mode,
         )
     except HarnessRunsError as exc:
         print(f"error: {exc}", file=sys.stderr)

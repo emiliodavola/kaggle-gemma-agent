@@ -459,6 +459,32 @@ def test_render_summary_without_metrics() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# sandbox-deps mode (issue #45)
+# --------------------------------------------------------------------------- #
+def test_build_report_surfaces_sandbox_deps_mode(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"sandbox_deps_mode": "repaired"}), encoding="utf-8"
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["sandbox_deps_mode"] == "repaired"
+    text = run_report.render_summary(report)
+    assert "sandbox-deps repaired" in text
+    assert len(text.strip().splitlines()) == 6
+
+
+def test_build_report_without_manifest_yields_no_sandbox_deps_mode(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["sandbox_deps_mode"] is None
+    assert "sandbox-deps" not in run_report.render_summary(report)
+
+
+# --------------------------------------------------------------------------- #
 # index
 # --------------------------------------------------------------------------- #
 def test_append_index_and_compaction(tmp_path: Path) -> None:
