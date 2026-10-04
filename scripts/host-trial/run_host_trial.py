@@ -132,6 +132,10 @@ HARNESS_MODEL = "HARNESS_MODEL"
 SESSION_ENV = "HARNESS_TRIAL_SESSION"
 TASKS_ENV = "HARNESS_TRIAL_TASKS"
 BACKEND_ENV = "HARNESS_TRIAL_BACKEND"
+#: Opt-in: when set (``lmstudio``/``llamacpp``/``auto``) the runner starts the
+#: local model server via ``serve_local_model.py`` before the eval.
+LAUNCH_ENV = "HARNESS_TRIAL_LAUNCH"
+LAUNCH_SCRIPT = "serve_local_model.py"
 ENV_KEYS: tuple[str, ...] = (OPENAI_API_KEY, OPENAI_BASE_URL, HARNESS_MODEL, BACKEND_ENV)
 
 DEFAULT_BACKEND = "opencode"
@@ -812,10 +816,19 @@ def note(text: str) -> None:
     print(f"  {text}")
 
 
-def run_cmd(cmd: Sequence[str], *, what: str | None = None) -> None:
-    """Echo and run *cmd*, raising :class:`TrialError` on a non-zero exit."""
+def run_cmd(
+    cmd: Sequence[str],
+    *,
+    what: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Echo and run *cmd*, raising :class:`TrialError` on a non-zero exit.
+
+    *env* overrides the child environment when given (used to forward the merged
+    ``.env`` + process env to the model launcher).
+    """
     print("  $ " + " ".join(cmd))
-    result = subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, check=False, env=dict(env) if env is not None else None)
     if result.returncode != 0:
         label = what or cmd[0]
         raise TrialError(f"{label} failed (exit {result.returncode})")
@@ -1740,6 +1753,32 @@ def archive_and_report(
     return latest
 
 
+def should_launch_local_model(
+    env_file_values: Mapping[str, str], environ: Mapping[str, str]
+) -> bool:
+    """Return whether the runner should launch the local model server."""
+    raw = environ.get(LAUNCH_ENV) or env_file_values.get(LAUNCH_ENV) or "none"
+    return raw.strip().lower() not in {"", "none"}
+
+
+def launch_local_model(paths: TrialPaths, merged_env: Mapping[str, str], action: str) -> None:
+    """Call ``serve_local_model.py <action>`` with the merged trial environment.
+
+    The helper lives on the Windows host (``lms`` / ``llama-server``) while the
+    runner runs in WSL; the script handles the WSL->Windows interop itself. The
+    merged environment (``.env`` overridden by the process env) is forwarded so
+    the launcher sees the same ``HARNESS_*`` values as the runner.
+    """
+    script = paths.repo_root / "scripts" / "host-trial" / LAUNCH_SCRIPT
+    if not script.is_file():
+        raise TrialError(f"model launcher not found: {script}")
+    run_cmd(
+        [sys.executable, str(script), action],
+        what=f"serve_local_model {action}",
+        env=merged_env,
+    )
+
+
 def run(
     repo_root: Path,
     results_name: str,
@@ -1749,12 +1788,15 @@ def run(
     allow_incomplete_wheels: bool = False,
     repair_sandbox_deps: bool = False,
     skip_backend_smoke: bool = False,
+    launch_model: bool = False,
+    keep_model: bool = False,
 ) -> Path:
     """Execute all eight trial phases and return the archived run directory."""
     paths = paths_for(repo_root, results_name)
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
-    task_ids = resolve_trial_tasks(load_env_file(env_file), os.environ)
+    env_file_values = load_env_file(env_file)
+    task_ids = resolve_trial_tasks(env_file_values, os.environ)
     fetch_data(paths, task_ids)
     snapshots = [paths.snapshots_dir / f"{task_id}.tgz" for task_id in task_ids]
     ensure_trial_wheels(
@@ -1768,7 +1810,15 @@ def run(
     install_swegemma(paths)
     build_image(paths)
     env = resolve_backend_env(env_file)
-    run_eval(paths, env, skip_backend_smoke=skip_backend_smoke)
+    merged_env = {**env_file_values, **os.environ}
+    wants_launch = launch_model or should_launch_local_model(env_file_values, os.environ)
+    if wants_launch:
+        launch_local_model(paths, merged_env, "start")
+    try:
+        run_eval(paths, env, skip_backend_smoke=skip_backend_smoke)
+    finally:
+        if wants_launch and not keep_model:
+            launch_local_model(paths, merged_env, "stop")
     return archive_and_report(
         paths,
         env[HARNESS_MODEL],
@@ -1827,6 +1877,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "(default: faithful competition set)"
         ),
     )
+    parser.add_argument(
+        "--launch-model",
+        action="store_true",
+        help=(
+            "start the local model server (serve_local_model.py) before the eval; also "
+            "triggered by HARNESS_TRIAL_LAUNCH in .env or the process environment"
+        ),
+    )
+    parser.add_argument(
+        "--keep-model",
+        action="store_true",
+        help="do not stop the launched model server when the trial ends",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = REPO_ROOT
@@ -1840,6 +1903,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_incomplete_wheels=args.allow_incomplete_wheels,
             repair_sandbox_deps=args.repair_sandbox_deps,
             skip_backend_smoke=args.skip_backend_smoke,
+            launch_model=args.launch_model,
+            keep_model=args.keep_model,
         )
     except TrialError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
