@@ -121,6 +121,11 @@ SWEGEMMA_TOOL = "swegemma"
 #: poisons every later run. The runner clears matching dirs before each eval.
 SWEGEMMA_SP_CACHE_PREFIX = "swegemma_sp_cache_"
 
+#: Token budget for the backend smoke probe. A reasoning model spends the first
+#: tokens on the thinking channel, so a 16-token probe returns ``content: ""``
+#: with ``finish_reason: "length"`` for a backend that is actually healthy.
+SMOKE_MAX_TOKENS = 256
+
 OPENAI_API_KEY = "OPENAI_API_KEY"
 OPENAI_BASE_URL = "OPENAI_BASE_URL"
 HARNESS_MODEL = "HARNESS_MODEL"
@@ -575,7 +580,10 @@ def smoke_test_backend(
 
     *base_url* is the local header-proxy origin; the proxy joins its configured
     upstream base path, so this exercises the exact route the harness will use,
-    and the ``tools`` field catches a server/model that cannot do tool calling.
+    and the ``tools`` field catches a server/model that rejects a tool-aware
+    request. A reasoning model may answer only on the thinking channel; a
+    non-empty reasoning field counts as a usable reply, because the probe asks
+    for text, not a tool call (tool calling is exercised by the run itself).
     Returns a short description of the reply. Raises :class:`TrialError` when the
     backend is unreachable, rejects the request, or returns no usable choice.
     """
@@ -583,7 +591,7 @@ def smoke_test_backend(
         {
             "model": model,
             "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
-            "max_tokens": 16,
+            "max_tokens": SMOKE_MAX_TOKENS,
             "temperature": 0,
             "tools": [
                 {
@@ -639,14 +647,17 @@ def smoke_test_backend(
     message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
     content = message.get("content")
     tool_calls = message.get("tool_calls")
-    if not content and not tool_calls:
+    reasoning = message.get("reasoning_content") or message.get("reasoning")
+    if not content and not tool_calls and not reasoning:
         raise TrialError(
             f"backend smoke failed: empty reply for model {model!r}. The model may be "
             "unloaded or its context length too small."
         )
     if tool_calls:
         return "tool call returned"
-    return str(content).strip()[:40]
+    if content:
+        return str(content).strip()[:40]
+    return "reasoning-only reply"
 
 
 def build_eval_args(
