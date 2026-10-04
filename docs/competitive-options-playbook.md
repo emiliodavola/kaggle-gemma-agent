@@ -15,6 +15,8 @@ Los números de presupuesto y las rutas de archivo son los reales del proyecto.
 |---|---|---|
 | Modelo base | único y obligatorio: `gemma-4-31b-it-qat-w4a16-ct` (~16–18 GB, INT4 QAT) | `submission/agent.yaml` |
 | Contexto máximo | 32.768 tokens (prompt + pensamiento + salida) | `submission/configs/sampling.yaml` |
+| Contexto efectivo (compactación) | **~14.336 tokens**: el evaluador compacta antes del techo (ver §10.1) | §10.1 |
+| Ventana con LoRA | la caché KV se reduce; menos adaptadores y de rango bajo = más ventana (ver §10.1) | §10.1 |
 | Salida máxima | `max_output_tokens: 16384` | `sampling.yaml` |
 | Presupuesto de pensamiento | `thinking_budget: 4096` | `sampling.yaml` |
 | Tiempo total del agente | **12 h** para todas las tareas (incluye el armado del entorno, excluye la validación) | `eval_config.yaml` (topes por tarea) |
@@ -28,8 +30,8 @@ Los números de presupuesto y las rutas de archivo son los reales del proyecto.
 
 **Consecuencia:** el orden de poder es: (1) medir, (2) usar mejor el contexto y las
 herramientas, (3) afinar lo que se le pide al modelo, (4) recién al final entrenar.
-El contexto de 32k y las 100 llamadas son el cuello de botella real, no el
-conocimiento del modelo.
+El contexto (techo 32.768, pero compactación a ~14.336) y las 100 llamadas son el
+cuello de botella real, no el conocimiento del modelo.
 
 ---
 
@@ -78,7 +80,9 @@ perdidas de antemano distorsiona. Propuesta:
 3. Definir un subconjunto de tareas "ganables" para comparar cambios A/B.
 
 No cambia el puntaje oficial (el set es oculto), pero hace que tus decisiones se
-basen en señal, no en ruido.
+basen en señal, no en ruido. Ojo: hay tareas públicas que **nadie** puede resolver
+por bugs del wheelhouse público (dependencias de test faltantes, `VERIFY_X509_STRICT`
+en py3.13); ver §10.4.
 
 ---
 
@@ -147,6 +151,9 @@ El enemigo es el corte del bloque de llamada a herramienta por exceder
 - No volcar archivos enteros al contexto.
 - Cerrar cada turno con una acción concreta, no con un monólogo.
 
+Además, el evaluador **compacta a ~14.336 tokens** y, con LoRA, la caché KV se
+reduce (§10.1): planificá una ventana efectiva chica, no 32k.
+
 ### 2.6 Parámetros de generación — `submission/configs/sampling.yaml`
 
 ```yaml
@@ -159,6 +166,8 @@ thinking_config:
 ```
 
 Probar cada cambio por separado y medir.
+Aviso (§10.1): `include_thoughts` estaba **desactivando** el razonamiento en vez
+de solo ocultarlo; verificá antes de confiar en ese ajuste.
 
 ### 2.7 Verificación previa al envío (ya implementada)
 
@@ -189,7 +198,11 @@ evaluation:
 ```
 
 La suma de topes debe entrar en las 12 h. Estrategia: dar menos a tareas simples
-y reservar margen para las difíciles; no regalar una hora a todas.
+y reservar margen para las difíciles; no regalar una hora a todas. Las tareas
+corren **secuencialmente** y el scorer lee **solo cuatro campos**
+(`timeout_seconds`, `max_tool_calls`, `max_time_minutes`, `max_turns`). Pasar las
+12 h hoy **da error** (planean cambiarlo a "sin terminar = 0"); poné
+`max_time_minutes` moderado como salvavidas (§10.3).
 
 ### 2.10 Empaquetado y control de cumplimiento
 
@@ -288,6 +301,9 @@ tok.save_pretrained("submission/adapters/main_lora")     # + adapter_config.json
 ```
 
 Verificar: `rank ≤ 128`, `< 3 GiB`, y que `pack --check` siga en 6/6.
+Para probar adaptadores localmente hay que usar **el wheel parcheado del
+wheelhouse** (el wheel público de PyPI falla con Gemma4+LoRA, §10.5). Y cada
+adaptador consume caché KV: rango bajo y pocos adaptadores (§10.1).
 
 ### 4.2 Optimización por preferencias (DPO / KTO / ORPO)
 
@@ -318,8 +334,8 @@ funcionando.
 ### 4.4 Destilación
 
 Generar trayectorias exitosas con un modelo más fuerte **fuera** de la
-competencia (permitido, es desarrollo) y usarlas como datos de SFT. Baja el
-costo de conseguir ejemplos buenos.
+competencia y usarlas como datos de SFT. Baja el costo de conseguir ejemplos
+buenos. Habilitado oficialmente, con la salvedad de licencias (§10.6).
 
 ### 4.5 Varios adaptadores a la vez (hasta 8)
 
@@ -427,3 +443,114 @@ Regla: un cambio por experimento; si no se puede aislar, no se puede atribuir.
 4. SFT (§4.0–4.1, 4.7–4.10).
 5. Preferencias o RL (§4.2–4.3).
 6. Consolidación, envíos y artículo (§5–6).
+
+---
+
+## 10. Hallazgos del foro de Kaggle y su impacto
+
+**Método y advertencia.** Leí los hilos con la API de Kaggle
+(`kaggle competitions topics show <id>`). No pude listar los hosts oficiales (la
+API devolvió 403), así que marco como **respuesta oficial** solo la de autores que
+hablan en nombre de la organización y ejecutan mantenimiento del evaluador —
+principalmente **Ryan Holbrook** (que además publica el notebook oficial) y, en
+una respuesta institucional, **Ashley Oldacre**. El resto es de participantes:
+útil, pero **no oficial**. No inventé autorías ni citas.
+
+### 10.1 Contexto, compactación y caché KV (corrige la sección 0)
+
+- El techo duro es **32.768** tokens combinados, pero el evaluador **compacta a
+  ~14.336** (`token_threshold = 14.336`). El contexto de trabajo real es ~14k. Un
+  participante pidió confirmar si el scorer usa 14.336 o 32.768; el staff dijo que
+  lo revisaría.
+- **Con LoRA activado, la caché KV se reduce.** Se reportó que con un adaptador de
+  rango 64 la caché KV bajó a ~7.600 tokens y los prompts de ~14.000 tokens **se
+  colgaban**. Respuesta oficial: vLLM ahora ajusta los parámetros de LoRA según lo
+  que enviaste; **menos adaptadores y de rango más bajo (o ninguno) dejan más
+  memoria para la caché KV**.
+- `include_thoughts` estaba **desactivando** el razonamiento en vez de solo
+  ocultarlo (reportado sobre `adk_submission 0.2.12`; sin respuesta oficial aún).
+
+Implicancia: planificá una ventana efectiva de ~7–14k tokens, no 32k; y tratá cada
+adaptador como un costo de contexto.
+
+### 10.2 Bugs del evaluador y estado
+
+- **Pensamientos descartados entre llamadas** (vLLM ignoraba `reasoning_content`):
+  confirmado como bug; arreglado en el wheelhouse actual. **No repuntúan envíos
+  viejos.**
+- **Resultados de herramientas con doble codificación JSON**: arreglado en el
+  wheelhouse del 30-sep; `edit_file` sumó un fallback.
+- **`thinking_budget` y `seed` no se enviaban**: arreglado en el wheelhouse
+  reciente.
+- **Adaptadores borrados en silencio** (vLLM 0.19.1 parcheado): arreglado desde el
+  wheelhouse v23.
+- **`sample_submission` oficial fallaba**: arreglado.
+- **Herramienta no declarada termina la tarea y descarta el parche**: el staff dijo
+  que lo implementaría. → Declarar solo las herramientas que usás.
+- **Bug con skills + `run_skill_script`** (`file_path` como lista → excepción que
+  termina la tarea): reportado. → Cuidado con scripts en skills.
+- **Errores de envío tras el 30-sep**: fue una caída de GPU; resuelta.
+
+### 10.3 Presupuesto y ejecución
+
+- Las tareas corren **secuencialmente**.
+- El scorer lee **solo cuatro campos** de `eval_config.yaml`: `timeout_seconds`,
+  `max_tool_calls`, `max_time_minutes`, `max_turns`; por defecto, sin límite.
+- Pasar las 12 h **hoy da error**; planean cambiarlo a "tareas sin terminar = 0".
+  El staff recomienda poner `max_time_minutes` moderado como salvavidas.
+
+### 10.4 Tareas públicas rotas (no sobre-optimizar)
+
+- Faltan dependencias de test en el wheelhouse público (`typing_inspection`,
+  `inline_snapshot`, `dirty_equals`, `ujson`/`orjson`, `python-multipart`,
+  `pytest-httpbin`): el parche de referencia falla en muchas tareas FastAPI/requests.
+- Python 3.13 activa `VERIFY_X509_STRICT`, y el certificado de `pytest-httpbin` no
+  tiene AKI → los tests https fallan siempre (≈8 tareas de requests).
+- Tests version-gated con `skipif` que se saltan en 3.13.
+- Hay **desplazamiento de dominio** entre los repos públicos y la evaluación oculta
+  (hilo abierto).
+
+Implicancia: la tasa sobre las 129 públicas **no** es comparable con el puntaje
+oficial; filtrá las irresolubles (§1.3) y usá el notebook oficial de
+getting-started.
+
+### 10.5 Adaptadores y vLLM
+
+- Solo el wheel parcheado del wheelhouse soporta LoRA para Gemma4; el wheel público
+  de PyPI falla al arrancar ("does not support LoRA yet"). → Para probar adaptadores
+  localmente, usá el wheelhouse de la competencia.
+- `discover_adapters` espera la **raíz del submission**, no la carpeta del adaptador.
+
+### 10.6 Destilación
+
+Respuesta institucional (Ashley Oldacre): se pueden usar modelos externos para
+destilar **siempre que** se usen según su licencia y que el resultado no entre en
+conflicto con las reglas de la competencia. → Habilita el enfoque de §4.4, con la
+salvedad de licencias.
+
+### 10.7 Señales de la tabla
+
+`sample_submission` oficial ~0.01; envíos mínimos reportados 0.08–0.12; el techo
+público ronda ~0.15. Hay margen.
+
+### 10.8 Hilos de referencia
+
+| Hilo | Tema | Respuesta oficial |
+|---|---|---|
+| 744354 | Pensamientos descartados entre llamadas | Sí (arreglado) |
+| 744331 | Caché KV con LoRA / cuelgues | Sí (ajuste dinámico) |
+| 744692 | Umbral de compactación | Sí ("lo reviso") |
+| 744794 | Resumen de bugs y estado | Sí |
+| 743063 | Concurrencia, `eval_config`, 12 h | Sí |
+| 743213 / 743508 | Adaptadores/LoRA, `sample_submission` | Sí |
+| 744272 | Resultados de herramienta con doble JSON | Sí |
+| 745028 | Herramienta no declarada | Sí (a implementar) |
+| 744807 | Errores tras el wheelhouse del 30-sep | Sí (caída de GPU) |
+| 742882 | Evaluación local, deps faltantes | Sí |
+| 742911 | Grafos/embeddings vacíos | Sí (parcial) |
+| 742807 | Destilación desde LLMs externos | Sí (Ashley Oldacre) |
+| 743973 | Parches de referencia fallan offline | No (participantes) |
+| 743186 | Infra para SFT/RL | No (participante) |
+| 745059 | `include_thoughts` desactiva el razonamiento | No |
+| 745774 | El agente repite el mismo comando | No |
+| 745796 | Desplazamiento de dominio | No |
