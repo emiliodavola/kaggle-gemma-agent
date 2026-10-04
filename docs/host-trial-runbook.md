@@ -1,14 +1,16 @@
-# Host trial runbook — `swegemma` on Windows 11 + Docker Desktop
+# Host trial runbook — `swegemma` on Windows 11 (Docker Desktop) or Linux
 
 This runbook lets a **human operator** run a real `swegemma` trial on their own
-host (Windows 11 + Docker Desktop). It exists because the agent container is
-unprivileged and has no Docker daemon (`robotina#80`, `#81`), so the harness
-cannot be exercised in CI/dev. **No GPU is needed**: the agent loop is pointed
-at an OpenAI-compatible cloud backend instead of the local vLLM server.
+host (Windows 11 + Docker Desktop, or Linux/WSL2 — see §1.5). It exists because
+the agent container is unprivileged and has no Docker daemon (`robotina#80`,
+`#81`), so the harness cannot be exercised in CI/dev. **No GPU is needed**: the
+agent loop is pointed at an OpenAI-compatible cloud backend instead of the local
+vLLM server.
 
-The examples below are **PowerShell** (Windows 11), kept as phase reference; the
-runnable entry point is the Python runner in section 0. Do not translate them
-to bash-style `head`/`tail`/`grep`.
+The phase examples below are **PowerShell** (Windows 11), kept as phase reference;
+the runnable entry point is the Python runner in section 0. On Linux/WSL2 use the
+same commands in bash. Do not translate the PowerShell snippets to bash-style
+`head`/`tail`/`grep`.
 
 ## 0. Runner — `scripts/host-trial/run_host_trial.py`
 
@@ -84,6 +86,9 @@ docker info
 Expected: a `Server:` section with `OSType: linux`. If it errors, Docker
 Desktop is not running (or is in Windows-containers mode).
 
+For a trial that matches the scored environment, enable WSL integration and run
+the runner inside the distro — see §1.5.
+
 ### 1.2 uv
 
 ```powershell
@@ -113,6 +118,48 @@ your Kaggle account page; do **not** commit it). Verify:
 ```powershell
 kaggle competitions list --search gemma-4-developer-agent
 ```
+
+### 1.5 Linux / WSL2 (recommended for a representative trial)
+
+The scored Kaggle evaluation runs on Linux. On Windows the external harness tool
+layer (`adk-eval-core`) resolves `read_file` / `edit_file` / `write_file` paths
+with Windows semantics, so the container path becomes
+`/workspace/D:\workspace\...` and the tool returns
+`FileReadError: 404 Client Error for http+docker://localnpipe/...`. That bug is
+**host-side**, not a submission defect, and it does not exist when the Docker
+client runs on Linux. Running the trial on Windows therefore burns tool calls and
+understates the resolution rate — in `runs/20261003T051525Z`, `fastapi_14962` hit
+the path error ~30 times before exhausting its 100-call budget and
+`fastapi_15588` ~47 times. Treat a Windows trial as a **pessimistic lower bound**;
+run on Linux for a number you can act on. Non-goal reference:
+`odd/tasks/host-trial-wheel-closure.md`.
+
+Prerequisites (Windows 11 host):
+
+1. Install WSL2 with a distro: `wsl --install -d Ubuntu` (reboot if prompted).
+2. Docker Desktop → Settings → Resources → WSL Integration → enable your distro.
+3. In the Ubuntu shell confirm the Linux engine is reachable: `docker info` — the
+   `Server:` section must show `OSType: linux`.
+4. Install **inside the distro**: `uv` (https://docs.astral.sh/uv/), `git`, and
+   `kaggle`.
+
+Then run every phase from inside the distro. The runner is the same cross-platform
+entry point (§0); only the OS differs, so §3–§9 apply unchanged:
+
+```sh
+git clone https://github.com/emiliodavola/kaggle-gemma-agent.git ~/kaggle-gemma-agent
+cd ~/kaggle-gemma-agent
+git fetch origin
+git checkout <trial-branch>
+cp .env.example .env          # then fill it in; never commit
+uv sync --locked
+uv run python scripts/host-trial/run_host_trial.py run_01
+```
+
+Keep the clone in the Linux home (`~`), **not** under `/mnt/c`: crossing the
+Windows/Linux filesystem boundary is slow and can break file permissions. A
+remote Linux host works the same way as long as `docker info` shows a Linux
+engine.
 
 ## 2. Clone and check out the trial branch
 
