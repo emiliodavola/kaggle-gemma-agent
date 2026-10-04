@@ -26,6 +26,9 @@ Backends
 
 Environment (all optional; CLI flags win)
 -----------------------------------------
+Values are read from ``<repo root>/.env`` first and then the process environment
+(the process env wins), so running this script directly behaves like the runner.
+
 ``HARNESS_TRIAL_LAUNCH``     ``none`` (default) | ``lmstudio`` | ``llamacpp`` | ``auto``
 ``HARNESS_TRIAL_CONTEXT``    context tokens (default 26214)
 ``HARNESS_TRIAL_MODEL_KEY``  LM Studio model key to load (default = ``HARNESS_MODEL``)
@@ -57,6 +60,8 @@ DEFAULT_MODEL_ID = "gemma-4-31b-it-qat"
 DEFAULT_LLAMACPP_PORT = 8080
 DEFAULT_LMSTUDIO_PORT = 1234
 BACKEND_PORTS = {"lmstudio": DEFAULT_LMSTUDIO_PORT, "llamacpp": DEFAULT_LLAMACPP_PORT}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ENV_FILE = REPO_ROOT / ".env"
 
 
 class LauncherError(Exception):
@@ -79,6 +84,53 @@ def windows_executable(name: str, *, on_wsl: bool) -> str:
     if on_wsl and not name.lower().endswith(".exe"):
         return f"{name}.exe"
     return name
+
+
+def parse_env_file(text: str) -> dict[str, str]:
+    """Parse ``KEY=VALUE`` lines from a ``.env`` body, mirroring the runner.
+
+    Blank lines and ``#`` comments are skipped, an optional ``export`` prefix is
+    accepted, a single matching quote pair is stripped, and an active key defined
+    twice raises :class:`LauncherError` naming the key and both line numbers, so a
+    colliding value is never silently ignored.
+    """
+    values: dict[str, str] = {}
+    first_lines: dict[str, int] = {}
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            continue
+        if key in values:
+            raise LauncherError(
+                f"duplicate key {key!r} in .env (lines {first_lines[key]} and {lineno}); "
+                "keep only one active definition"
+            )
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+        first_lines[key] = lineno
+    return values
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    """Return the parsed ``.env`` at *path*, or ``{}`` when it does not exist."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    return parse_env_file(text)
+
+
+def merged_env(env_file_values: Mapping[str, str], environ: Mapping[str, str]) -> dict[str, str]:
+    """Merge ``.env`` under the process environment (the process env wins)."""
+    return {**env_file_values, **environ}
 
 
 def resolve_backend(cli_value: str | None, env: Mapping[str, str]) -> str:
@@ -358,9 +410,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--context", type=int, default=None, help="context tokens")
     parser.add_argument("--timeout", type=float, default=120.0, help="readiness timeout (s)")
     parser.add_argument("--dry-run", action="store_true", help="print commands without running")
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=DEFAULT_ENV_FILE,
+        help=".env to read (default: <repo root>/.env); the process env wins",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    env = os.environ
+    env = merged_env(load_env_file(args.env_file), os.environ)
     try:
         if args.action == "start":
             return start(args, env)

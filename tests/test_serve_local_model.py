@@ -155,3 +155,48 @@ def test_start_dry_run_prints_llamacpp_command(capsys: pytest.CaptureFixture[str
     assert "llama-server" in out
     assert "--jinja" in out
     assert "dry-run: not executing" in out
+
+
+def test_parse_env_file_handles_comments_quotes_and_export() -> None:
+    text = (
+        "# comment\n"
+        "\n"
+        "OPENAI_API_KEY=plain\n"
+        "export HARNESS_TRIAL_LAUNCH=lmstudio\n"
+        "HARNESS_MODEL='quoted model'\n"
+        'HARNESS_TRIAL_CONTEXT="26214"\n'
+        "NO_EQUALS_HERE\n"
+    )
+    values = launcher.parse_env_file(text)
+    assert values["OPENAI_API_KEY"] == "plain"
+    assert values["HARNESS_TRIAL_LAUNCH"] == "lmstudio"
+    assert values["HARNESS_MODEL"] == "quoted model"
+    assert values["HARNESS_TRIAL_CONTEXT"] == "26214"
+    assert "NO_EQUALS_HERE" not in values
+
+
+def test_parse_env_file_rejects_duplicate_keys() -> None:
+    with pytest.raises(launcher.LauncherError, match="duplicate key"):
+        launcher.parse_env_file("A=1\nB=2\nA=3\n")
+
+
+def test_load_env_file_missing_returns_empty(tmp_path: Path) -> None:
+    assert launcher.load_env_file(tmp_path / "nope.env") == {}
+
+
+def test_merged_env_process_wins() -> None:
+    merged = launcher.merged_env({"HARNESS_MODEL": "from-file"}, {"HARNESS_MODEL": "from-env"})
+    assert merged["HARNESS_MODEL"] == "from-env"
+
+
+def test_env_file_drives_backend_and_context(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "HARNESS_TRIAL_LAUNCH=lmstudio\n"
+        "HARNESS_TRIAL_CONTEXT=16384\n"
+        "HARNESS_MODEL=gemma-4-31b-it-qat\n",
+        encoding="utf-8",
+    )
+    env = launcher.merged_env(launcher.load_env_file(env_file), {})
+    assert launcher.resolve_backend(None, env) == "lmstudio"
+    assert launcher.resolve_context(None, env) == 16384
