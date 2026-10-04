@@ -576,6 +576,7 @@ def test_build_report_flags_environment_blocked_for_a_shared_missing_module(
 
     assert report["environment_blocked"] is True
     assert report["missing_modules"] == ["typing_inspection"]
+    assert report["missing_module_tasks"] == {"typing_inspection": ["a__1", "b__2"]}
     assert any(
         "environment failure: missing module(s) typing_inspection" in reason
         for reason in report["status_reasons"]
@@ -587,20 +588,122 @@ def test_build_report_flags_environment_blocked_for_a_shared_missing_module(
     assert len(text.strip().splitlines()) == 6
 
 
-def test_build_report_does_not_flag_a_single_missing_module(tmp_path: Path) -> None:
+def test_build_report_flags_a_single_missing_module(tmp_path: Path) -> None:
     run_dir = _make_run_with_missing(tmp_path, {"a__1": "typing_inspection", "b__2": None})
 
     report = run_report.build_report(run_dir, environ={}, docker_version="test")
 
-    assert report["environment_blocked"] is False
+    assert report["environment_blocked"] is True
     assert report["missing_modules"] == ["typing_inspection"]
-    assert not any("environment failure" in reason for reason in report["status_reasons"])
+    assert report["missing_module_tasks"] == {"typing_inspection": ["a__1"]}
+    assert any("environment failure" in reason for reason in report["status_reasons"])
 
 
-def test_build_report_does_not_flag_distinct_missing_modules(tmp_path: Path) -> None:
+def test_build_report_flags_distinct_missing_modules(tmp_path: Path) -> None:
     run_dir = _make_run_with_missing(tmp_path, {"a__1": "typing_inspection", "b__2": "other_dep"})
 
     report = run_report.build_report(run_dir, environ={}, docker_version="test")
 
-    assert report["environment_blocked"] is False
+    assert report["environment_blocked"] is True
     assert report["missing_modules"] == ["other_dep", "typing_inspection"]
+    assert report["missing_module_tasks"] == {
+        "other_dep": ["b__2"],
+        "typing_inspection": ["a__1"],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# verdict inference (issue #46)
+# --------------------------------------------------------------------------- #
+def _make_evidence_run(root: Path) -> Path:
+    """Build a run directory whose tasks have no result lines and no JUnit."""
+    run_dir = root / "runs" / "20260101T000000Z"
+    run_dir.mkdir(parents=True)
+    return run_dir
+
+
+def test_build_report_infers_failure_from_archived_collection_error(tmp_path: Path) -> None:
+    run_dir = _make_evidence_run(tmp_path)
+    task_dir = run_dir / "c__3"
+    task_dir.mkdir()
+    (task_dir / "test_output.log").write_text(
+        "ERROR collecting tests/test_sse.py\n"
+        "E   ModuleNotFoundError: No module named 'starlette'\n"
+        "!!!! Interrupted: 1 error during collection !!!!\n",
+        encoding="utf-8",
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    task = report["tasks"][0]
+
+    assert task["resolved"] is False
+    assert task["status"] == "fail"
+    assert task["verdict_source"] == "test_output"
+    assert task["infra_error"] is True
+    assert task["missing_modules"] == ["starlette"]
+
+
+def test_build_report_keeps_tasks_unknown_without_failure_evidence(tmp_path: Path) -> None:
+    run_dir = _make_evidence_run(tmp_path)
+    (run_dir / "u__1").mkdir()
+    benign = run_dir / "u__2"
+    benign.mkdir()
+    (benign / "test_output.log").write_text("1 passed\n", encoding="utf-8")
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    by_id = {task["instance_id"]: task for task in report["tasks"]}
+
+    for instance_id in ("u__1", "u__2"):
+        task = by_id[instance_id]
+        assert task["resolved"] is None
+        assert task["status"] == "unknown"
+        assert task["verdict_source"] == "none"
+        assert task["infra_error"] is False
+
+
+def test_build_report_reports_measured_totals_and_reason(tmp_path: Path) -> None:
+    run_dir = _make_evidence_run(tmp_path)
+    (run_dir / "u__1").mkdir()
+    failing = run_dir / "f__2"
+    failing.mkdir()
+    (failing / "test_output.log").write_text(
+        "===== FAILURES =====\nFAILED tests/t.py::test_a\n", encoding="utf-8"
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["totals"]["tasks"] == 2
+    assert report["totals"]["measured"] == 1
+    assert report["totals"]["unknown"] == 1
+    assert any(
+        "1 of 2 task(s) measured (1 without verdict)" in reason
+        for reason in report["status_reasons"]
+    )
+
+    text = run_report.render_summary(report)
+    assert "| measured 1/2" in text
+    assert len(text.strip().splitlines()) == 6
+
+
+def test_build_report_infers_verdict_from_junit_without_record(tmp_path: Path) -> None:
+    run_dir = _make_evidence_run(tmp_path)
+    task_dir = run_dir / "j__1"
+    task_dir.mkdir()
+    (task_dir / "junit.xml").write_text(JUNIT_ALL, encoding="utf-8")
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    task = report["tasks"][0]
+
+    assert task["resolved"] is False
+    assert task["verdict_source"] == "junit"
+
+
+def test_build_report_explicit_record_verdict_wins_over_junit(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "a__1" / "junit.xml").write_text(JUNIT_ALL, encoding="utf-8")
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    task_a = next(task for task in report["tasks"] if task["instance_id"] == "a__1")
+
+    assert task_a["resolved"] is True
+    assert task_a["verdict_source"] == "record"
