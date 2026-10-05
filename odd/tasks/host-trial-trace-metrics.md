@@ -47,6 +47,7 @@ Kaggle topic #745774 (Hitarth Jain) distinguishes:
 ## Evidence
 
 - Issue: #64. Branch: `feat/host-trial-trace-metrics` (from `main`).
+- PR: #65 (base `main`, assignee `emiliodavola`, `Closes #64`).
 - `uv run pytest tests/ -q` -> `224 passed`.
 - `uv run ruff check src/ tests/ scripts/` -> `All checks passed!`
 - `uv run ruff format --check src/ tests/ scripts/` -> `15 files already formatted`.
