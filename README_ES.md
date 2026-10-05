@@ -60,6 +60,10 @@ por git.
   offline.
 - **Verificación de cumplimiento**: controla los seis puntos del contrato en
   cada PR.
+- **Variante del system prompt** (`submission/configs/prompt_variant.yaml`):
+  elige `legacy` o `v2`; `uv run python -m kaggle_gemma_agent.prompt_variant
+  apply` la materializa en `submission/prompts/system.md`, y el packer aplica la
+  selección automáticamente.
 - **Harness runs y reportes** (`harness_runs.py`, `run_report.py`): archivan una
   corrida de `swegemma` y la renderizan; ver `docs/harness-logging-contract.md`
   y `docs/run-reports.md`.

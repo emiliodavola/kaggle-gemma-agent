@@ -55,6 +55,10 @@ Local-only paths (`data/`, `runs/`, `tmp/`, `.agents/`) are git-ignored.
   `submission.zip` from `submission/` (declarative `agent.yaml`, configs,
   prompts, sub-agents, shipped skills). Stdlib-only and offline.
 - **Compliance gate** — checks the six contract points on every PR.
+- **System prompt variant** (`submission/configs/prompt_variant.yaml`) — selects
+  `legacy` or `v2`; `uv run python -m kaggle_gemma_agent.prompt_variant apply`
+  materializes it into `submission/prompts/system.md`, and packing applies the
+  selection automatically.
 - **Harness runs and reports** (`harness_runs.py`, `run_report.py`) — archive a
   `swegemma` run and render it; see `docs/harness-logging-contract.md` and
   `docs/run-reports.md`.
