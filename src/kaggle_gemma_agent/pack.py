@@ -34,6 +34,8 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from .prompt_variant import PromptVariantError, apply_variant, has_selector
+
 MAX_UNPACKED_BYTES = 3 * 1024**3
 AGENT_MANIFEST = "agent.yaml"
 EVAL_CONFIG = "eval_config.yaml"
@@ -127,6 +129,11 @@ def build_submission(
     """
     source_dir = Path(source_dir)
     output_path = Path(output_path)
+    if has_selector(source_dir):
+        try:
+            apply_variant(source_dir)
+        except PromptVariantError as exc:
+            raise PackError(str(exc)) from exc
     validate_source(source_dir)
     manifest = load_agent_manifest(source_dir, agent_manifest)
 
