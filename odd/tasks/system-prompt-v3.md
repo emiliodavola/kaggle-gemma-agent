@@ -46,6 +46,7 @@ Baseline from `trace_metrics.py`:
 ## Evidence
 
 - Issue: #66. Branch: `feat/system-prompt-v3` (from `main`).
+- PR: #67 (base `main`, assignee `emiliodavola`, `Closes #66`).
 - `uv run pytest tests/ -q` -> `225 passed`.
 - `uv run ruff check src/ tests/ scripts/` -> `All checks passed!`
 - `uv run mypy src/ scripts/` -> `Success: no issues found in 8 source files`.
