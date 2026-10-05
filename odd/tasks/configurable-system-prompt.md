@@ -80,4 +80,4 @@ often used 8–18 edits and 46–62 calls.
   -> `IDENTICAL` (legacy is the pre-change prompt verbatim).
 - `diff submission/prompts/system.md submission/prompts/system.v2.md` ->
   identical (active prompt is the selected v2).
-- PR: (filled when opened).
+- PR: #61 (base `main`, assignee `emiliodavola`, `Closes #60`).
