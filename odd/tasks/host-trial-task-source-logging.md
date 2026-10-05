@@ -62,4 +62,4 @@ the `.env`" symptom (13 ids in `.env`, run kept the 9 old ones).
   `trial tasks source: .env (.env)` + 13 ids.
 - Simulated exported `HARNESS_TRIAL_TASKS` (old 9) now warns:
   `WARNING: the process environment overrides HARNESS_TRIAL_TASKS from .env; unset HARNESS_TRIAL_TASKS to use the file`, with both lists printed.
-- PR: (filled when opened).
+- PR: #63 (base `main`, assignee `emiliodavola`, `Closes #62`).
