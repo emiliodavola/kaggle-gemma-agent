@@ -306,6 +306,99 @@ def test_resolve_trial_tasks_blank_falls_back_to_default() -> None:
     assert runner.resolve_trial_tasks({}, {"HARNESS_TRIAL_TASKS": ""}) == runner.TASK_IDS
 
 
+def test_describe_task_resolution_source_is_process_env() -> None:
+    resolution = runner.describe_task_resolution(
+        {"HARNESS_TRIAL_TASKS": "file_a"}, {"HARNESS_TRIAL_TASKS": "env_a"}
+    )
+
+    assert resolution.source == runner.TASK_SOURCE_PROCESS_ENV
+    assert resolution.task_ids == ("env_a",)
+    assert resolution.shadowed is True
+
+
+def test_describe_task_resolution_source_is_env_file() -> None:
+    resolution = runner.describe_task_resolution({"HARNESS_TRIAL_TASKS": "a,b"}, {})
+
+    assert resolution.source == runner.TASK_SOURCE_ENV_FILE
+    assert resolution.task_ids == ("a", "b")
+    assert resolution.shadowed is False
+
+
+def test_describe_task_resolution_source_is_default() -> None:
+    resolution = runner.describe_task_resolution({}, {})
+
+    assert resolution.source == runner.TASK_SOURCE_DEFAULT
+    assert resolution.task_ids == runner.TASK_IDS
+    assert resolution.shadowed is False
+
+
+def test_describe_task_resolution_same_value_is_not_shadowed() -> None:
+    resolution = runner.describe_task_resolution(
+        {"HARNESS_TRIAL_TASKS": "a,b"}, {"HARNESS_TRIAL_TASKS": "a,b"}
+    )
+
+    assert resolution.source == runner.TASK_SOURCE_PROCESS_ENV
+    assert resolution.shadowed is False
+
+
+def test_describe_task_resolution_matches_resolve_trial_tasks() -> None:
+    cases = [
+        ({}, {}),
+        ({"HARNESS_TRIAL_TASKS": "a,b"}, {}),
+        ({"HARNESS_TRIAL_TASKS": "file"}, {"HARNESS_TRIAL_TASKS": "env"}),
+        ({}, {"HARNESS_TRIAL_TASKS": "   "}),
+    ]
+
+    for env_file_values, environ in cases:
+        assert runner.describe_task_resolution(
+            env_file_values, environ
+        ).task_ids == runner.resolve_trial_tasks(env_file_values, environ)
+
+
+def test_note_task_resolution_logs_source_and_warns_on_shadow(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_file = tmp_path / ".env"
+    resolution = runner.describe_task_resolution(
+        {"HARNESS_TRIAL_TASKS": "fastapi_1,fastapi_2"},
+        {"HARNESS_TRIAL_TASKS": "fastapi_9"},
+    )
+
+    runner.note_task_resolution(env_file, resolution)
+
+    out = capsys.readouterr().out
+    assert "trial tasks source: process env" in out
+    assert str(env_file) in out
+    assert "WARNING" in out
+    assert "fastapi_9" in out
+    assert "fastapi_1,fastapi_2" in out
+
+
+def test_note_task_resolution_no_warning_when_only_env_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_file = tmp_path / ".env"
+    resolution = runner.describe_task_resolution({"HARNESS_TRIAL_TASKS": "a,b"}, {})
+
+    runner.note_task_resolution(env_file, resolution)
+
+    out = capsys.readouterr().out
+    assert "trial tasks source: .env" in out
+    assert "WARNING" not in out
+
+
+def test_note_task_resolution_logs_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    resolution = runner.describe_task_resolution({}, {})
+
+    runner.note_task_resolution(tmp_path / ".env", resolution)
+
+    out = capsys.readouterr().out
+    assert "trial tasks source: default" in out
+    assert "WARNING" not in out
+
+
 def test_resolve_backend_env_records_resolved_tasks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
