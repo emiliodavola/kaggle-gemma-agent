@@ -1,0 +1,17 @@
+# System prompt variant materialized into prompts/system.md.
+#
+# The ADK manifest binds its instruction with a static
+# `!include prompts/system.md`; it cannot read a variable. This selector is the
+# indirection. The variant -> file mapping lives in
+# src/kaggle_gemma_agent/prompt_variant.py.
+#
+# Allowed values:
+#   legacy -> prompts/system.legacy.md   (prompt shipped before this change)
+#   v2     -> prompts/system.v2.md       (data-driven prompt)
+#
+# Apply the selection to the source tree (needed for a local trial):
+#   uv run python -m kaggle_gemma_agent.prompt_variant apply
+#
+# Packing materializes the selection into the archive automatically:
+#   uv run python -m kaggle_gemma_agent.pack submission
+variant: v2
