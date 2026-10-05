@@ -23,6 +23,7 @@ ACTIVE_PROMPT = Path("prompts/system.md")
 VARIANTS: dict[str, Path] = {
     "legacy": Path("prompts/system.legacy.md"),
     "v2": Path("prompts/system.v2.md"),
+    "v3": Path("prompts/system.v3.md"),
 }
 VARIANT_LINE = re.compile(r"^\s*variant:\s*(\S+)")
 

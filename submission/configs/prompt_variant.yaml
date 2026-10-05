@@ -8,10 +8,11 @@
 # Allowed values:
 #   legacy -> prompts/system.legacy.md   (prompt shipped before this change)
 #   v2     -> prompts/system.v2.md       (data-driven prompt)
+#   v3     -> prompts/system.v3.md       (loop/submit rules, prioritized)
 #
 # Apply the selection to the source tree (needed for a local trial):
 #   uv run python -m kaggle_gemma_agent.prompt_variant apply
 #
 # Packing materializes the selection into the archive automatically:
 #   uv run python -m kaggle_gemma_agent.pack submission
-variant: v2
+variant: v3

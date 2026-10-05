@@ -133,6 +133,10 @@ def test_pack_build_rejects_invalid_selector(tmp_path: Path) -> None:
         pack.build_submission(source, tmp_path / "submission.zip")
 
 
+def test_v3_variant_is_registered() -> None:
+    assert prompt_variant.VARIANTS["v3"] == Path("prompts/system.v3.md")
+
+
 def test_shipped_submission_matches_selector() -> None:
     assert prompt_variant.is_active(SUBMISSION_DIR) is True, (
         "submission/prompts/system.md is out of sync with configs/prompt_variant.yaml; "
