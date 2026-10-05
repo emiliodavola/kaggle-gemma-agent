@@ -131,6 +131,10 @@ OPENAI_BASE_URL = "OPENAI_BASE_URL"
 HARNESS_MODEL = "HARNESS_MODEL"
 SESSION_ENV = "HARNESS_TRIAL_SESSION"
 TASKS_ENV = "HARNESS_TRIAL_TASKS"
+#: Where the resolved task list came from, for logging and shadow detection.
+TASK_SOURCE_PROCESS_ENV = "process env"
+TASK_SOURCE_ENV_FILE = ".env"
+TASK_SOURCE_DEFAULT = "default"
 BACKEND_ENV = "HARNESS_TRIAL_BACKEND"
 #: Opt-in: when set (``lmstudio``/``llamacpp``/``auto``) the runner starts the
 #: local model server via ``serve_local_model.py`` before the eval.
@@ -382,6 +386,56 @@ def parse_trial_tasks(
     return task_ids or default
 
 
+@dataclass(frozen=True)
+class TaskResolution:
+    """Resolved trial task ids plus the source that won.
+
+    ``process_value`` and ``env_file_value`` are the raw ``HARNESS_TRIAL_TASKS``
+    strings; they let the runner flag a process environment that shadows a
+    different ``.env`` value.
+    """
+
+    task_ids: tuple[str, ...]
+    source: str
+    process_value: str
+    env_file_value: str
+
+    @property
+    def shadowed(self) -> bool:
+        """Return whether the process env overrides a different ``.env`` value."""
+        if not self.process_value or not self.env_file_value:
+            return False
+        return self.process_value.strip() != self.env_file_value.strip()
+
+
+def describe_task_resolution(
+    env_file_values: Mapping[str, str],
+    environ: Mapping[str, str],
+    *,
+    default: tuple[str, ...] = TASK_IDS,
+) -> TaskResolution:
+    """Resolve the trial task ids and record which source won.
+
+    Precedence mirrors :func:`resolve_trial_tasks`: process environment, then
+    ``.env``, then *default*.
+    """
+    process_value = environ.get(TASKS_ENV, "")
+    env_file_value = env_file_values.get(TASKS_ENV, "")
+    if process_value:
+        source = TASK_SOURCE_PROCESS_ENV
+    elif env_file_value:
+        source = TASK_SOURCE_ENV_FILE
+    else:
+        source = TASK_SOURCE_DEFAULT
+    raw = process_value or env_file_value
+    return TaskResolution(
+        task_ids=parse_trial_tasks(raw, default=default),
+        source=source,
+        process_value=process_value,
+        env_file_value=env_file_value,
+    )
+
+
 def resolve_trial_tasks(
     env_file_values: Mapping[str, str],
     environ: Mapping[str, str],
@@ -389,8 +443,26 @@ def resolve_trial_tasks(
     default: tuple[str, ...] = TASK_IDS,
 ) -> tuple[str, ...]:
     """Resolve the trial task ids (real env wins over ``.env``, then *default*)."""
-    raw = environ.get(TASKS_ENV) or env_file_values.get(TASKS_ENV) or ""
-    return parse_trial_tasks(raw, default=default)
+    return describe_task_resolution(env_file_values, environ, default=default).task_ids
+
+
+def note_task_resolution(env_file: Path, resolution: TaskResolution) -> None:
+    """Log the task-list source and warn when the process env shadows ``.env``."""
+    if resolution.source == TASK_SOURCE_DEFAULT:
+        note(
+            f"trial tasks source: {TASK_SOURCE_DEFAULT} "
+            f"(no {TASKS_ENV} in the process env or {env_file})"
+        )
+    else:
+        note(f"trial tasks source: {resolution.source} ({env_file})")
+    note(f"trial tasks: {', '.join(resolution.task_ids)}")
+    if resolution.shadowed:
+        note(
+            f"WARNING: the process environment overrides {TASKS_ENV} from {env_file}; "
+            f"unset {TASKS_ENV} to use the file"
+        )
+        note(f"  process env: {resolution.process_value}")
+        note(f"  {env_file}: {resolution.env_file_value}")
 
 
 def join_upstream_path(base_path: str, request_target: str) -> str:
@@ -1796,7 +1868,9 @@ def run(
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
     env_file_values = load_env_file(env_file)
-    task_ids = resolve_trial_tasks(env_file_values, os.environ)
+    resolution = describe_task_resolution(env_file_values, os.environ)
+    note_task_resolution(env_file, resolution)
+    task_ids = resolution.task_ids
     fetch_data(paths, task_ids)
     snapshots = [paths.snapshots_dir / f"{task_id}.tgz" for task_id in task_ids]
     ensure_trial_wheels(
