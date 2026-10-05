@@ -50,4 +50,16 @@ the `.env`" symptom (13 ids in `.env`, run kept the 9 old ones).
 ## Evidence
 
 - Issue: #62. Branch: `feat/host-trial-task-source-logging` (from `main`).
-- (to complete with real command output.)
+- Commit: `6f196fd` (code + tests + `.env.example` + tracker).
+- `uv run pytest tests/ -q` -> `215 passed`.
+- `uv run ruff check src/ tests/ scripts/` -> `All checks passed!`
+- `uv run mypy src/ scripts/` -> `Success: no issues found in 7 source files`.
+- `uv run pyright` -> `0 errors, 0 warnings, 0 informations`.
+- `uv run coverage report -m` -> TOTAL 98% (gate 90%).
+- `uv run python -m kaggle_gemma_agent.pack submission --check` ->
+  `submission contract OK (6/6 points)`.
+- Behavior on the real `.env` (no process override):
+  `trial tasks source: .env (.env)` + 13 ids.
+- Simulated exported `HARNESS_TRIAL_TASKS` (old 9) now warns:
+  `WARNING: the process environment overrides HARNESS_TRIAL_TASKS from .env; unset HARNESS_TRIAL_TASKS to use the file`, with both lists printed.
+- PR: (filled when opened).
