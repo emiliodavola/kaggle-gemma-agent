@@ -50,19 +50,34 @@ often used 8–18 edits and 46–62 calls.
 
 ## Tasks
 
-- [ ] T1 — `submission/prompts/system.legacy.md` (current prompt verbatim) and
+- [x] T1 — `submission/prompts/system.legacy.md` (current prompt verbatim) and
       `submission/prompts/system.v2.md` (new data-driven prompt).
-- [ ] T2 — `submission/configs/prompt_variant.yaml` selector, default `v2`.
-- [ ] T3 — `src/kaggle_gemma_agent/prompt_variant.py`: read/apply/status + CLI.
-- [ ] T4 — `pack.py` build path materializes the selection; no-op when the
+- [x] T2 — `submission/configs/prompt_variant.yaml` selector, default `v2`.
+- [x] T3 — `src/kaggle_gemma_agent/prompt_variant.py`: read/apply/status + CLI.
+- [x] T4 — `pack.py` build path materializes the selection; no-op when the
       selector is absent (backward compatible).
-- [ ] T5 — `submission/prompts/system.md` materialized to the selected variant.
-- [ ] T6 — Tests: `tests/test_prompt_variant.py` + pack integration case.
-- [ ] T7 — Gates: pytest, ruff, ruff format, mypy, pyright, coverage, `pack
+- [x] T5 — `submission/prompts/system.md` materialized to the selected variant.
+- [x] T6 — Tests: `tests/test_prompt_variant.py` + pack integration case.
+- [x] T7 — Gates: pytest, ruff, ruff format, mypy, pyright, coverage, `pack
       submission --check` 6/6, forbidden-token scan of `submission/`.
-- [ ] T8 — Issue #60, branch, work-unit commits, PR against `main`.
+- [x] T8 — Issue #60, branch, work-unit commits, PR against `main`.
 
 ## Evidence
 
 - Issue: #60. Branch: `feat/configurable-system-prompt` (from `main`).
-- (to complete with real command output.)
+- Commits: `248f980` (prompts + selector), `f2be3e7` (module + pack wiring +
+  tests).
+- `uv run pytest tests/ -q` -> `207 passed`.
+- `uv run ruff check src/ tests/ scripts/` -> `All checks passed!`
+- `uv run mypy src/ scripts/` -> `Success: no issues found in 7 source files`.
+- `uv run pyright` -> `0 errors, 0 warnings, 0 informations`.
+- `uv run coverage report -m` -> TOTAL 98% (gate 90%).
+- `uv run python -m kaggle_gemma_agent.pack submission --check` ->
+  `submission contract OK (6/6 points)`.
+- `uv run python -m kaggle_gemma_agent.prompt_variant show` ->
+  `variant: v2 -> prompts/system.v2.md | prompts/system.md: in sync`.
+- `git show HEAD:submission/prompts/system.md | diff - submission/prompts/system.legacy.md`
+  -> `IDENTICAL` (legacy is the pre-change prompt verbatim).
+- `diff submission/prompts/system.md submission/prompts/system.v2.md` ->
+  identical (active prompt is the selected v2).
+- PR: (filled when opened).
