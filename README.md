@@ -37,7 +37,6 @@ Kaggle API docs: <https://www.kaggle.com/docs/api>. Never commit the token.
 ├── docs/                   # competition notes, contracts, runbook, reports
 ├── odd/tasks/              # per-feature tracker (goal, tasks, evidence)
 ├── scripts/host-trial/     # cross-platform host trial runner
-├── skill-stack/            # 12 agent skills (one SKILL.md each)
 ├── src/kaggle_gemma_agent/ # submission packer, harness runs, run reports
 ├── submission/             # agent manifest, configs, prompts, shipped skills
 ├── tests/                  # pytest suite
@@ -56,15 +55,15 @@ Local-only paths (`data/`, `runs/`, `tmp/`, `.agents/`) are git-ignored.
   prompts, sub-agents, shipped skills). Stdlib-only and offline.
 - **Compliance gate** — checks the six contract points on every PR.
 - **System prompt variant** (`submission/configs/prompt_variant.yaml`) — selects
-  `legacy` or `v2`; `uv run python -m kaggle_gemma_agent.prompt_variant apply`
-  materializes it into `submission/prompts/system.md`, and packing applies the
-  selection automatically.
+  `legacy`, `v2`, or `v3`; `uv run python -m kaggle_gemma_agent.prompt_variant
+  apply` materializes it into `submission/prompts/system.md`, and packing applies
+  the selection automatically.
 - **Harness runs and reports** (`harness_runs.py`, `run_report.py`) — archive a
   `swegemma` run and render it; see `docs/harness-logging-contract.md` and
   `docs/run-reports.md`.
 - **Host trial** (`scripts/host-trial/run_host_trial.py`) — the eight-phase host
   trial; see `docs/host-trial-runbook.md`.
-- **Skills** — 12 skills under `skill-stack/`, copied into `submission/skills/`.
+- **Skills** — 12 skills under `submission/skills/` (one `SKILL.md` each).
 
 ## Compliance gate
 

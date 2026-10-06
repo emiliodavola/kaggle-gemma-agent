@@ -39,7 +39,6 @@ subas el token al repositorio.
 ├── docs/                   # notas, contratos, runbook y reportes de la competencia
 ├── odd/tasks/              # tracker por feature (objetivo, tareas, evidencia)
 ├── scripts/host-trial/     # runner multiplataforma del host trial
-├── skill-stack/            # 12 skills del agente (un SKILL.md cada una)
 ├── src/kaggle_gemma_agent/ # packer del submission, harness runs, run reports
 ├── submission/             # manifest del agente, configs, prompts, skills enviadas
 ├── tests/                  # suite de pytest
@@ -61,7 +60,7 @@ por git.
 - **Verificación de cumplimiento**: controla los seis puntos del contrato en
   cada PR.
 - **Variante del system prompt** (`submission/configs/prompt_variant.yaml`):
-  elige `legacy` o `v2`; `uv run python -m kaggle_gemma_agent.prompt_variant
+  elige `legacy`, `v2` o `v3`; `uv run python -m kaggle_gemma_agent.prompt_variant
   apply` la materializa en `submission/prompts/system.md`, y el packer aplica la
   selección automáticamente.
 - **Harness runs y reportes** (`harness_runs.py`, `run_report.py`): archivan una
@@ -69,7 +68,7 @@ por git.
   y `docs/run-reports.md`.
 - **Host trial** (`scripts/host-trial/run_host_trial.py`): el host trial de ocho
   fases; ver `docs/host-trial-runbook.md`.
-- **Skills**: 12 skills en `skill-stack/`, copiadas a `submission/skills/`.
+- **Skills**: 12 skills en `submission/skills/` (un `SKILL.md` cada una).
 
 ## Verificación de cumplimiento
 
