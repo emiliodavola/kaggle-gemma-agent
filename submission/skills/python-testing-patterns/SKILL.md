@@ -1,25 +1,19 @@
 ---
 name: python-testing-patterns
-description: "Trigger: write or read pytest tests, reproduce a bug. Offline pytest, fixture, and unittest.mock patterns; keep scratch tests in /tmp."
+description: "Trigger: write or read pytest tests, or reproduce a bug offline. Use the pytest, fixture, and unittest.mock pattern table."
 license: MIT
-metadata: {author: emiliodavola, version: "1.0"}
+metadata: {author: emiliodavola, version: "2.0"}
 ---
 
 ## Activation Contract
-
-Load when writing or reading pytest tests for a Python task, or when a scratch
-reproduction is needed.
+Load when writing or reading pytest tests, or when a scratch reproduction is needed.
 
 ## Hard Rules
-
-- No plugins that require installation; use stdlib `unittest.mock` and pytest
-  built-ins only.
-- Never edit task-shipped tests, `conftest.py`, or `pytest.ini`.
-- Scratch tests live in `/tmp`, never in `/workspace`.
+- Use stdlib `unittest.mock` and pytest built-ins only; no installs.
 - Tests must be deterministic: no network, no sleeping, no wall-clock coupling.
+- Scratch tests live in `/tmp`; never touch task tests or protected files (see `patch-hygiene`).
 
 ## Decision Gates
-
 | Need | Pattern |
 |---|---|
 | isolate a dependency | `unittest.mock.patch` / `MagicMock` |
@@ -29,14 +23,11 @@ reproduction is needed.
 | filesystem output | `tmp_path` fixture |
 
 ## Execution Steps
-
 1. `read_file` the failing test to learn the repo's assertion style.
-2. Reproduce in a `/tmp` scratch test that imports the library symbol directly.
+2. Reproduce in a `/tmp` scratch test importing the library symbol directly.
 3. Mock only the true boundary (I/O, clock, randomness), not internal helpers.
 4. `run_command python -m pytest /tmp/scratch_test.py -q` to confirm the cause.
 5. Translate the fix into library code, never into the test.
 
 ## Output Contract
-
-Return the scratch test path and output plus the confirmed cause. Hand off to
-`systematic-debugging` or `test-driven-development`.
+Return the scratch test path and output plus the confirmed cause. Hand off to `systematic-debugging` or `test-driven-development`.
