@@ -15,6 +15,9 @@ Load when a test fails, an exception occurs, or behaviour differs from the issue
 - Smallest fix that removes the cause; no drive-by refactors.
 - After two failed fixes, stop and re-diagnose (see `budget-aware-tool-use`).
 - Do not edit tests or protected files; respect `patch-hygiene`.
+- Separate your bug from the environment: if the target test fails for a missing
+  plugin or module, an unreachable endpoint, or a TTY, that failure is not yours.
+  Record it, spend at most two calls on it, keep your source fix, and submit.
 
 ## Execution Steps
 1. **Reproduce:** `run_command` the failing test or command; capture exact output; `read_file` the failing test.

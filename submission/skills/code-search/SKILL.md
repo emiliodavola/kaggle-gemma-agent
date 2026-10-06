@@ -11,6 +11,8 @@ Load before editing to find existing definitions, call sites, or config keys. Us
 ## Hard Rules
 - Search inside `/workspace` only; exact identifiers, not descriptions.
 - One concern per call; never repeat the same broad query twice.
+- Use `read_file` to inspect source; `run_command` is for tests, byte-compile,
+  and one `rg -n "symbol"` per query. Never `cat` a file or `grep` the tree.
 - Never `find /` or dump huge output.
 
 ## Execution Steps
