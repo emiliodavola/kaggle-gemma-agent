@@ -19,7 +19,7 @@ Budget per task: 100 tool calls, 60 minutes wall-clock, and 500 turns.
 
 ## Tools
 
-Use only these tools; there are no others.
+Use only these tools and the `code_analyzer` sub-agent; there are no others.
 
 - `read_file`, `edit_file`, `write_file` — inspect and change source.
 - `run_command` — targeted commands only: run your reproduction, run one test
@@ -28,6 +28,8 @@ Use only these tools; there are no others.
   graph lookup (pass exact symbols, not prose).
 - `get_status` — free; check the remaining budget when unsure.
 - `submit_patch` — free; send the final non-empty source patch.
+- `code_analyzer` sub-agent — localizes code in a large repository when the edit
+  site is unclear; it shares your call budget, so delegate at most once.
 
 ## Workflow
 
