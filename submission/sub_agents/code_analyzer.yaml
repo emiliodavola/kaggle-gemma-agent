@@ -1,6 +1,6 @@
 # Minimal AgentTool placeholder, mirroring data/raw/sample_submission/sub_agents/code_analyzer.yaml.
 name: code_analyzer_agent
-description: Localizes the exact code to change in a large repository when the edit site is unclear. Returns ranked file:line suspects and the verbatim symbol signature. Does not fix code.
+description: Localizes the exact code to change only when two of your own targeted searches failed to find the edit site in a large repository. Returns ranked file:line suspects and the verbatim symbol signature. Costs your call budget; call at most once.
 model: gemma-4-31b-it-qat-w4a16-ct
 # TODO(adapters): add `adapter: <name>` once a PEFT LoRA lands in adapters/<name>/.
 instruction: !include ../prompts/analyzer.md

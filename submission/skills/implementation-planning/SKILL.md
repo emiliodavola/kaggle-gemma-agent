@@ -11,6 +11,9 @@ Load after localization and before the first edit, when the change spans more th
 ## Hard Rules
 - Plan is short: <=7 steps, each one edit or one command.
 - Keep the plan inline in the turn; no repo files, no ledger, no subagents.
+- Add or rename a public keyword, parameter, alias, or error message at the
+  definition site and grep every call site in the same step; a half-plumbed
+  keyword breaks test collection.
 - Re-plan only when a step fails.
 
 ## Execution Steps

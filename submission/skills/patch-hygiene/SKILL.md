@@ -9,7 +9,7 @@ metadata: {author: emiliodavola, version: "2.0"}
 Load before the first edit and before any scratch file, log redirect, or diff inspection.
 
 ## Hard Rules
-- Scratch files and logs go in `/tmp`, never in `/workspace`.
+- Scratch files and logs go in `/tmp`, never in `/workspace`. Create them with `run_command` shell redirection; the file tools resolve paths inside `/workspace` only and reject `/tmp`.
 - Never modify `tests/`, `conftest.py`, `pytest.ini`, or harness runner config; the harness resets them and scoring ignores changes.
 - Allowed: edit `/workspace/<pkg>/*.py`; use `write_file` only for a new module under `/workspace/<pkg>/`.
 - No network, no installs, no background processes; keep the diff minimal.

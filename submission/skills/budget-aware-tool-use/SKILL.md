@@ -10,7 +10,11 @@ Load at task start and whenever a loop seems unproductive. Governs call and cont
 
 ## Hard Rules
 - Reserve >=15 calls for verification and submission; do not exhaust the budget exploring.
-- `submit_patch` and `get_status` are free: call `get_status` whenever unsure.
+- `submit_patch` and `get_status` are free: call `get_status` at the 40-call
+  checkpoint and again before `submit_patch`.
+- On `budget_warning` or `BudgetExceeded`, stop exploring at once and submit the
+  best verified source fix; `submit_patch` still works after the call budget is
+  spent.
 - Batch reads; never re-read an unchanged file; prefer `search_similar_code` and `get_code_neighbors`.
 - Stop a failing approach after two attempts.
 - Always submit before exhausting calls.

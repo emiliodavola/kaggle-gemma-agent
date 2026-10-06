@@ -17,12 +17,15 @@ Load immediately before `submit_patch`, and after any fix, to prove the claim.
 - If evidence is missing or red, do not submit; loop back to the owning skill.
 
 ## Execution Steps
-1. `run_command` the exact target test verbatim; capture green output.
-2. `run_command` the nearest regression suite; if red, return to `systematic-debugging`.
-3. `run_command git diff --name-only`; revert any scratch, junk, or protected path.
-4. `run_command python -m py_compile <changed .py files>`; any syntax error is a hard stop.
-5. Read the full diff; self-review against the issue.
-6. Only when all checks are green, call `submit_patch`.
+1. Name the target test file from the issue or the nearest test for the changed
+   symbol; `run_command` it verbatim and capture the pass/fail counts.
+2. `run_command python -m py_compile <changed .py files>`; a syntax error is a hard stop.
+3. `run_command git status --short`; delete every untracked scratch file, then
+   `git diff --name-only` and revert scratch, junk, or protected paths.
+4. Confirm the diff has at least one hunk inside the repository package; a
+   scratch-only diff is not a fix, re-localize instead.
+5. Read the full diff; self-review against the issue and the target test.
+6. Only when the target test passes and the diff is source-only, call `submit_patch`.
 
 ## Output Contract
 Return the checklist (target test, regressions, syntax, diff scope) with real outputs, then `submit_patch`.

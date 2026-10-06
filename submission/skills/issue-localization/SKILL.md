@@ -12,6 +12,9 @@ Load for any issue-shaped task: bug report, traceback, failing test name, or fea
 - Never edit before the target is localized to a file and symbol.
 - Bounded, not exhaustive: at most 3 ranked hypotheses.
 - Extract entities from the issue only; never invent files, symbols, or APIs.
+- The tests are the spec: before editing, read the test that asserts the new
+  behaviour and use its exact symbol names, message strings, status codes, and
+  aliases verbatim; when issue text and test disagree, the test wins.
 - Cap this phase at ~10 calls; `submit_patch` and `get_status` are free (see `budget-aware-tool-use`).
 
 ## Execution Steps
