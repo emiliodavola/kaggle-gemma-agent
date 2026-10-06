@@ -1,3 +1,12 @@
+---
+Date: 2026-10-06
+Genre: proposal
+Status: open
+Scope: Selection decision over all 86 inventory items (which skills to ship and why); it does not build skill-stack/.
+Source of truth: docs/skill-stack-inventory.md and AGENTS.md; read 2026-10-06.
+Limits: decision record only; no upstream re-fetch and no web.
+---
+
 # Skill Stack Evaluation — Selection Proposal (Stage 2)
 
 Status: **PROPOSAL / decision record**. This document decides *what* to build and

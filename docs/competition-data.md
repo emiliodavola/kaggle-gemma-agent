@@ -7,7 +7,7 @@ outputs are quoted in [Provenance](#provenance) and in the PR body.
 
 - **Slug**: `gemma-4-developer-agent` (Google, sponsor Google LLC).
   `competition-metadata.json` in this repo is still the `INSERT_SLUG_HERE`
-  template, so the slug was taken from `docs/reporte-competencia.md` and
+  template, so the slug was taken from `docs/competition-research.md` and
   confirmed with `kaggle competitions list --search gemma-4-developer-agent`.
 - **Metric**: **Resolution Rate** = resolved tasks / total tasks ∈ `[0.0, 1.0]`.
   Per issue it is SWE-bench style PASS/FAIL: the agent patch is applied to the
