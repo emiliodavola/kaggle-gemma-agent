@@ -47,6 +47,7 @@ analysis. Summary:
 ## Evidence
 
 - Issue: #68. Branch: `feat/skills-compaction` (from `main`).
+- PR: #69 (base `main`, assignee `emiliodavola`, `Closes #68`).
 - Line count: **469 -> 322** lines across the 12 `submission/skills/*/SKILL.md`
   (largest 33, cap 40; total cap 380).
 - `uv run pytest tests/ -q` -> `231 passed` (6 new guards in `tests/test_skills.py`).
