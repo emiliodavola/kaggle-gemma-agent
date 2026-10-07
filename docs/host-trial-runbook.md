@@ -48,6 +48,49 @@ Two backend requirements are handled automatically by phase 7:
   proxy is a daemon thread that dies with the runner — it is not shipped in the
   submission.
 
+### 0.1 Selecting tasks — `--tasks`
+
+By default the trial runs two tasks (`fastapi_15661`, `fastapi_15588`). Pass
+`--tasks` to select against the `data/raw/tasks.jsonl` corpus (129 tasks today)
+in one of three forms, one example each:
+
+```sh
+# an exact instance id
+uv run python scripts/host-trial/run_host_trial.py run_01 --tasks fastapi_15588
+
+# a pattern: every fastapi_* task (67 today)
+uv run python scripts/host-trial/run_host_trial.py run_01 --tasks fastapi
+
+# the whole corpus (129 tasks today) — a long run
+uv run python scripts/host-trial/run_host_trial.py run_01 --tasks all
+```
+
+`--tasks` is repeatable and also accepts comma-separated values, and the values
+mix the three forms:
+
+```sh
+uv run python scripts/host-trial/run_host_trial.py run_01 \
+    --tasks fastapi_15588,fastapi_15661
+uv run python scripts/host-trial/run_host_trial.py run_01 \
+    --tasks fastapi --tasks requests
+```
+
+Each value is:
+
+- `all` — every instance id in the corpus, in corpus order;
+- an exact instance id — matched case-insensitively;
+- anything else — a case-insensitive **prefix** pattern first, then a
+  **substring** pattern, so `fastapi` selects every `fastapi_*` task.
+
+`--tasks` wins over `HARNESS_TRIAL_TASKS` (process environment, then `.env`,
+then the built-in default). Resolution follows **corpus order** and is
+**deduplicated**, so overlapping values never run a task twice. A value that
+matches nothing is a hard error: the runner exits non-zero, names the value and
+lists the closest corpus ids (helpful for a typo), instead of starting a run on
+a subset nobody asked for. The resolved request, count and ids are printed
+before the eval (truncated with "and N more" when long); `all` additionally
+warns that it selects the whole corpus and the run is long.
+
 ## Facts and provenance
 
 Every value below was read from a file in this repo. Anything not backed by a
