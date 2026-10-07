@@ -87,6 +87,22 @@ def test_only_unguarded_paths_pass(
     assert "OK" in capsys.readouterr().out
 
 
+def test_run_report_is_guarded() -> None:
+    assert guard.is_guarded("src/kaggle_gemma_agent/run_report.py") is True
+    assert "src/kaggle_gemma_agent/run_report.py" in guard.GUARDED_FILES
+
+
+def test_run_report_change_without_journal_entry_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(repo, "src/kaggle_gemma_agent/run_report.py", "x = 1\n")
+    _commit(repo, "run_report change")
+
+    assert _run(repo, monkeypatch) == 1
+
+    assert "run_report.py" in capsys.readouterr().err
+
+
 def test_no_journal_escape_passes_with_warning(
     repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

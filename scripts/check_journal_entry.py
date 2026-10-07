@@ -1,8 +1,9 @@
 """CI guard: a PR that touches guarded paths must ship a change-journal entry.
 
 The guard diffs ``<base>...<head>`` and fails when the change touches a guarded
-path -- ``submission/``, ``docs/``, ``scripts/host-trial/`` or the file
-``src/kaggle_gemma_agent/harness_runs.py`` -- while changing nothing under
+path -- ``submission/``, ``docs/``, ``scripts/host-trial/`` or the files
+``src/kaggle_gemma_agent/harness_runs.py`` and
+``src/kaggle_gemma_agent/run_report.py`` -- while changing nothing under
 ``docs/journal/``. A pull request may carry the escape token ``[no-journal]`` in
 its title or body to bypass the gate with a warning; the token must be justified
 in the PR body (see ``docs/journal/README.md``).
@@ -19,7 +20,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 GUARDED_PREFIXES = ("submission/", "docs/", "scripts/host-trial/")
-GUARDED_FILES = ("src/kaggle_gemma_agent/harness_runs.py",)
+GUARDED_FILES = (
+    "src/kaggle_gemma_agent/harness_runs.py",
+    "src/kaggle_gemma_agent/run_report.py",
+)
 JOURNAL_PREFIX = "docs/journal/"
 DEFAULT_ESCAPE_TOKEN = "[no-journal]"
 

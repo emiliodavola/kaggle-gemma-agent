@@ -780,6 +780,7 @@ def build_archive_args(
     tasks_file: Path,
     backend: str = BACKEND_ALIAS,
     sandbox_deps_mode: str | None = None,
+    timestamp: str | None = None,
 ) -> list[str]:
     """Build the ``harness_runs archive`` argv."""
     args = [
@@ -795,6 +796,8 @@ def build_archive_args(
     ]
     if sandbox_deps_mode is not None:
         args += ["--sandbox-deps-mode", sandbox_deps_mode]
+    if timestamp is not None:
+        args += ["--timestamp", timestamp]
     return args
 
 
@@ -1788,8 +1791,66 @@ def run_eval(
             os.environ[OPENAI_BASE_URL] = previous_base_url
 
 
+def harness_run_id() -> str | None:
+    """Return the run id the archiver will use, or ``None`` when unavailable.
+
+    The archiver run id comes from :func:`harness_runs.new_run_stamp`; the runner
+    reads the same function so the ``run_started`` entry and the archived
+    directory share one id.
+    """
+    try:
+        from kaggle_gemma_agent import harness_runs
+    except ImportError:
+        return None
+    return harness_runs.new_run_stamp()
+
+
+def emit_run_started(
+    repo_root: Path,
+    run_id: str,
+    task_ids: Sequence[str],
+    *,
+    journal_root: Path | None = None,
+) -> bool:
+    """Append a deterministic ``run_started`` journal event; never raise.
+
+    ``what`` and ``why`` depend only on the run id, so a re-run of the same id is
+    suppressed as a duplicate. Returns ``True`` when the event is present and
+    ``False`` when the journal module or root is unavailable, after one warning.
+    """
+    try:
+        from kaggle_gemma_agent import harness_runs, journal
+    except ImportError as exc:
+        print(f"warning: journal unavailable ({exc}); run_started not recorded", file=sys.stderr)
+        return False
+    try:
+        hashes = harness_runs.provenance_hashes(repo_root)
+        root = journal.default_root() if journal_root is None else Path(journal_root)
+        journal.append_event(
+            root,
+            type="run_started",
+            actor="runner",
+            what=f"Run {run_id} started",
+            why=f"Host trial started run {run_id}",
+            evidence=list(task_ids),
+            status="applied",
+            refs={"run_id": run_id},
+            hashes=cast("Mapping[str, str]", hashes),
+            counts={"tasks": len(task_ids)},
+        )
+        return True
+    except journal.DuplicateEntryError:
+        return True
+    except Exception as exc:
+        print(f"warning: journal run_started not recorded: {exc}", file=sys.stderr)
+        return False
+
+
 def archive_and_report(
-    paths: TrialPaths, backend: str, sandbox_deps_mode: str | None = None
+    paths: TrialPaths,
+    backend: str,
+    sandbox_deps_mode: str | None = None,
+    timestamp: str | None = None,
 ) -> Path:
     """Phase 8: archive into ``runs/<UTC>/`` and print the report."""
     phase("Phase 8/8 (runbook sec. 7-9): archive + report under runs/")
@@ -1808,6 +1869,7 @@ def archive_and_report(
             paths.tasks_file,
             backend,
             sandbox_deps_mode,
+            timestamp,
         ),
         what="harness_runs archive",
     )
@@ -1888,6 +1950,9 @@ def run(
     wants_launch = launch_model or should_launch_local_model(env_file_values, os.environ)
     if wants_launch:
         launch_local_model(paths, merged_env, "start")
+    run_id = harness_run_id()
+    if run_id is not None:
+        emit_run_started(paths.repo_root, run_id, task_ids)
     try:
         run_eval(paths, env, skip_backend_smoke=skip_backend_smoke)
     finally:
@@ -1897,6 +1962,7 @@ def run(
         paths,
         env[HARNESS_MODEL],
         sandbox_deps_mode="repaired" if repair_sandbox_deps else "faithful",
+        timestamp=run_id,
     )
 
 

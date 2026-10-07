@@ -67,8 +67,8 @@ Local-only paths (`data/`, `runs/`, `tmp/`, `.agents/`) are git-ignored.
 - **Change journal** (`src/kaggle_gemma_agent/journal.py`) — the chronological,
   cross-cutting log of changes and decisions: `uv run python -m
   kaggle_gemma_agent.journal add|render|list|validate`; a PR touching
-  `submission/`, `docs/`, `scripts/host-trial/` or `harness_runs.py` must carry
-  an entry. See `docs/journal/README.md`.
+  `submission/`, `docs/`, `scripts/host-trial/`, `harness_runs.py` or
+  `run_report.py` must carry an entry. See `docs/journal/README.md`.
 
 ## Compliance gate
 

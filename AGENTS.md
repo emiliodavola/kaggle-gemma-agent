@@ -71,8 +71,9 @@ Evidence is counts and paths, never causality. Without randomisation a batch
 comparison is written `"29/48 -> X/48 on a different batch"`, never
 `"it improved"`.
 
-Any PR that touches `submission/`, `docs/`, `scripts/host-trial/` or
-`src/kaggle_gemma_agent/harness_runs.py` adds its journal entry in the same PR.
+Any PR that touches `submission/`, `docs/`, `scripts/host-trial/`,
+`src/kaggle_gemma_agent/harness_runs.py` or `src/kaggle_gemma_agent/run_report.py`
+adds its journal entry in the same PR.
 The CI job `journal` enforces this with `scripts/check_journal_entry.py`.
 
 The token `[no-journal]` in the PR title or body is an escape hatch that must be

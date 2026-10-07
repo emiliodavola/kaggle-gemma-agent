@@ -175,6 +175,7 @@ fails when the diff touches a **guarded path** and changes nothing under
 - `docs/`
 - `scripts/host-trial/`
 - `src/kaggle_gemma_agent/harness_runs.py`
+- `src/kaggle_gemma_agent/run_report.py`
 
 Run it locally:
 
