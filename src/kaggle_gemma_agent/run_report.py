@@ -109,6 +109,14 @@ _PTP_KEYS = ("pass_to_pass", "PASS_TO_PASS", "pass_to_pass_tests")
 
 _ADDED_TEST_RE = re.compile(r"^\+\s*(?:async\s+)?def\s+(test_[A-Za-z0-9_]+)\s*\(")
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"](?P<module>[A-Za-z_][\w.]*)['\"]")
+_CANNOT_IMPORT_RE = re.compile(
+    r"cannot import name ['\"](?P<name>[A-Za-z_][\w]*)['\"]"
+    r" from ['\"](?P<module>[A-Za-z_][\w.]*)['\"]"
+)
+_MISSING_ATTRIBUTE_RE = re.compile(
+    r"AttributeError:\s*module ['\"](?P<module>[A-Za-z_][\w.]*)['\"]\s+"
+    r"has no attribute ['\"](?P<name>[A-Za-z_][\w]*)['\"]"
+)
 
 
 class RunReportError(Exception):
@@ -617,6 +625,27 @@ def _missing_modules(task_dir: Path, status: str) -> list[str]:
     return sorted({match.group("module") for match in _MISSING_MODULE_RE.finditer(text)})
 
 
+def _import_errors(task_dir: Path, status: str) -> list[str]:
+    """Return unique import/attribute resolution errors from a failing test log.
+
+    Reads the ``test_output.log`` tail only; a passing task or a task without a
+    test log yields an empty list. Recognizes ``cannot import name 'X' from 'Y'``
+    and ``AttributeError: module 'Y' has no attribute 'X'``. The result is a
+    sorted list of short human strings for deterministic output.
+    """
+    if status == "pass":
+        return []
+    text, _ = _read_tail(task_dir / "test_output.log", FAILURE_TAIL_CHARS)
+    if not text:
+        return []
+    errors: set[str] = set()
+    for match in _CANNOT_IMPORT_RE.finditer(text):
+        errors.add(f"cannot import name '{match.group('name')}' from '{match.group('module')}'")
+    for match in _MISSING_ATTRIBUTE_RE.finditer(text):
+        errors.add(f"module '{match.group('module')}' has no attribute '{match.group('name')}'")
+    return sorted(errors)
+
+
 def _build_task(
     run_dir: Path,
     task_dir: Path,
@@ -640,6 +669,7 @@ def _build_task(
     status = "unknown" if resolved is None else ("pass" if resolved else "fail")
     failure_kind = _failure_kind(task_dir, status)
     missing_modules = _missing_modules(task_dir, status)
+    import_errors = _import_errors(task_dir, status)
     infra_error = status != "pass" and bool(missing_modules)
 
     return {
@@ -666,6 +696,7 @@ def _build_task(
         "artifacts": _artifact_index(task_dir, run_dir),
         "failure_kind": failure_kind,
         "missing_modules": missing_modules,
+        "import_errors": import_errors,
         "failure_tail": _failure_tail(task_dir) if status != "pass" else None,
     }
 
