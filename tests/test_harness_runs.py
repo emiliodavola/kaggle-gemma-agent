@@ -290,6 +290,42 @@ def test_emit_run_finished_records_hashes_counts_and_evidence(tmp_path: Path) ->
     ]
 
 
+def test_emit_run_finished_rounds_rate_to_four_decimals(tmp_path: Path) -> None:
+    results = tmp_path / "results" / "run_01"
+    for subdir in ("traces", "logs", "patches", "test_outputs"):
+        (results / subdir).mkdir(parents=True, exist_ok=True)
+    for instance_id in ("a__1", "b__2", "c__3"):
+        (results / "logs" / f"{instance_id}.log").write_text("agent transcript\n", encoding="utf-8")
+        (results / "patches" / f"{instance_id}.patch").write_text(
+            "--- a\n+++ b\n", encoding="utf-8"
+        )
+        (results / "test_outputs" / f"{instance_id}.log").write_text(
+            "=== FAILURES ===\ntest_x failed\n", encoding="utf-8"
+        )
+    (results / "summary.json").write_text('{"resolved": 1, "total": 3}\n', encoding="utf-8")
+    (results / "task_results.jsonl").write_text(
+        '{"id": "a__1", "resolved": true}\n'
+        '{"id": "b__2", "resolved": false}\n'
+        '{"id": "c__3", "resolved": false}\n',
+        encoding="utf-8",
+    )
+    run_dir = harness_runs.archive_run(
+        results,
+        runs_root=tmp_path / "runs",
+        timestamp="20260101T000000Z",
+        backend="test-backend",
+    )
+    journal_root = tmp_path / "journal"
+
+    assert harness_runs.emit_run_finished(run_dir, journal_root=journal_root, repo_root=tmp_path)
+
+    event = journal.read_events(journal_root)[0]
+    assert event["counts"]["tasks"] == 3
+    assert event["counts"]["resolved"] == 1
+    assert event["counts"]["rate"] == 0.3333
+    assert event["counts"]["rate"] != 1 / 3
+
+
 def test_emit_run_finished_uses_null_for_missing_files(tmp_path: Path) -> None:
     run_dir = _archived_failing_run(tmp_path)
     journal_root = tmp_path / "journal"

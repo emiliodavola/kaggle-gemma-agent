@@ -1766,3 +1766,146 @@ def test_emit_run_started_warns_when_journal_unwritable(
 
     assert recorded is False
     assert "warning:" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# --tasks selector (corpus-driven task selection)
+# --------------------------------------------------------------------------- #
+_TASKS_CORPUS: tuple[str, ...] = (
+    "fastapi_15661",
+    "fastapi_15588",
+    "django_100",
+    "pandas_42",
+    "FastAPI_90000",
+)
+
+
+def _write_tasks_corpus(path: Path, ids: tuple[str, ...] = _TASKS_CORPUS) -> Path:
+    """Write a ``tasks.jsonl``-shaped corpus (one ``instance_id`` per line)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps({"instance_id": task_id}) + "\n" for task_id in ids),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_load_corpus_task_ids_reads_and_dedupes(tmp_path: Path) -> None:
+    corpus_file = _write_tasks_corpus(tmp_path / "tasks.jsonl", ("a", "b", "a"))
+
+    assert runner.load_corpus_task_ids(corpus_file) == ("a", "b")
+
+
+def test_load_corpus_task_ids_missing_file_raises(tmp_path: Path) -> None:
+    missing = tmp_path / "absent.jsonl"
+
+    with pytest.raises(runner.TrialError, match="tasks corpus not found"):
+        runner.load_corpus_task_ids(missing)
+
+
+def test_select_trial_tasks_exact_id_matches_case_insensitively() -> None:
+    assert runner.select_trial_tasks(("fastapi_15661",), _TASKS_CORPUS) == ("fastapi_15661",)
+    assert runner.select_trial_tasks(("FASTAPI_15588",), _TASKS_CORPUS) == ("fastapi_15588",)
+
+
+def test_select_trial_tasks_prefix_pattern_selects_every_match() -> None:
+    assert runner.select_trial_tasks(("fastapi",), _TASKS_CORPUS) == (
+        "fastapi_15661",
+        "fastapi_15588",
+        "FastAPI_90000",
+    )
+
+
+def test_select_trial_tasks_substring_pattern_matches_anywhere() -> None:
+    assert runner.select_trial_tasks(("api_",), _TASKS_CORPUS) == (
+        "fastapi_15661",
+        "fastapi_15588",
+        "FastAPI_90000",
+    )
+
+
+def test_select_trial_tasks_all_selects_the_whole_corpus() -> None:
+    assert runner.select_trial_tasks(("all",), _TASKS_CORPUS) == _TASKS_CORPUS
+
+
+def test_select_trial_tasks_dedupes_and_keeps_corpus_order() -> None:
+    assert runner.select_trial_tasks(("pandas_42", "fastapi", "fastapi_15661"), _TASKS_CORPUS) == (
+        "fastapi_15661",
+        "fastapi_15588",
+        "pandas_42",
+        "FastAPI_90000",
+    )
+
+
+def test_select_trial_tasks_unknown_value_raises_with_candidates() -> None:
+    with pytest.raises(runner.TaskSelectionError) as excinfo:
+        runner.select_trial_tasks(("fastapy",), _TASKS_CORPUS)
+
+    error = excinfo.value
+    assert error.value == "fastapy"
+    assert 0 < len(error.candidates) <= runner.TASK_CANDIDATE_LIMIT
+    assert any(candidate.startswith("fastapi") for candidate in error.candidates)
+
+
+def test_describe_task_resolution_accepts_comma_separated_flag_values() -> None:
+    resolution = runner.describe_task_resolution(
+        {}, {}, requested=("fastapi_15661,django_100",), corpus=_TASKS_CORPUS
+    )
+
+    assert resolution.source == runner.TASK_SOURCE_FLAG
+    assert resolution.task_ids == ("fastapi_15661", "django_100")
+
+
+def test_describe_task_resolution_flag_overrides_process_and_file_env() -> None:
+    resolution = runner.describe_task_resolution(
+        {"HARNESS_TRIAL_TASKS": "django_100"},
+        {"HARNESS_TRIAL_TASKS": "pandas_42"},
+        requested=("fastapi_15661",),
+        corpus=_TASKS_CORPUS,
+    )
+
+    assert resolution.source == runner.TASK_SOURCE_FLAG
+    assert resolution.task_ids == ("fastapi_15661",)
+
+
+def test_describe_task_resolution_absent_flag_is_unchanged() -> None:
+    resolution = runner.describe_task_resolution(
+        {"HARNESS_TRIAL_TASKS": "a,b"}, {}, corpus=_TASKS_CORPUS
+    )
+
+    assert resolution.source == runner.TASK_SOURCE_ENV_FILE
+    assert resolution.task_ids == ("a", "b")
+
+
+def test_note_task_resolution_flag_truncates_and_warns_for_all(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    corpus = tuple(f"fastapi_{index:02d}" for index in range(20))
+    resolution = runner.describe_task_resolution({}, {}, requested=("all",), corpus=corpus)
+
+    runner.note_task_resolution(tmp_path / ".env", resolution)
+
+    out = capsys.readouterr().out
+    assert "trial tasks source: --tasks (all)" in out
+    assert f"whole corpus ({len(corpus)} tasks)" in out
+    assert f"trial tasks ({len(corpus)}):" in out
+    assert "and 8 more" in out
+
+
+def test_resolved_flag_ids_reach_build_eval_args() -> None:
+    resolution = runner.describe_task_resolution(
+        {}, {}, requested=("fastapi",), corpus=_TASKS_CORPUS
+    )
+
+    args = runner.build_eval_args(
+        tasks_file=Path("t.jsonl"),
+        snapshots_dir=Path("s"),
+        submission_dir=Path("sub"),
+        results_dir=Path("r"),
+        models_yaml=Path("m.yaml"),
+        task_ids=resolution.task_ids,
+    )
+
+    start = args.index("--task-ids")
+    end = start + 1 + len(resolution.task_ids)
+    assert args[start + 1 : end] == list(resolution.task_ids)

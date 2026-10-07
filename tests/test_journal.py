@@ -675,3 +675,147 @@ def test_cli_validate_fail(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
 def test_cli_requires_subcommand() -> None:
     with pytest.raises(SystemExit):
         journal.main([])
+
+
+def test_transition_appends_deterministic_record(tmp_path: Path) -> None:
+    target = _add(tmp_path, what="base", ts="2026-10-06T10:00:00Z")
+
+    record = journal.transition(
+        tmp_path,
+        target,
+        to="superseded",
+        why="superseded by a later entry",
+        evidence=["PR #9"],
+        ts="2026-10-06T11:00:00Z",
+    )
+
+    assert record == "J-20261006-02"
+    event = _events(tmp_path)[-1]
+    assert event["what"] == f"Marked {target} as superseded"
+    assert event["type"] == "change"
+    assert event["why"] == "superseded by a later entry"
+    assert event["evidence"] == ["PR #9", target]
+    assert event["refs"]["docs"] == []
+
+
+def test_transition_default_why_is_deterministic(tmp_path: Path) -> None:
+    target = _add(tmp_path, what="base", ts="2026-10-06T10:00:00Z")
+
+    journal.transition(tmp_path, target, to="reverted", ts="2026-10-06T11:00:00Z")
+
+    event = _events(tmp_path)[-1]
+    assert event["why"] == f"status transition of {target} to reverted"
+    assert event["type"] == "reversal"
+
+
+def test_transition_rewrites_only_status_field(tmp_path: Path) -> None:
+    target = _add(tmp_path, what="base", why="because", ts="2026-10-06T10:00:00Z")
+    before = (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()[0]
+
+    journal.transition(tmp_path, target, to="superseded", ts="2026-10-06T11:00:00Z")
+
+    after = (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    assert after == before.replace('"status": "applied"', '"status": "superseded"')
+    assert [key for key, _ in json.loads(after, object_pairs_hook=lambda items: items)] == list(
+        journal.EVENT_KEYS
+    )
+
+
+def test_transition_preserves_line_order_and_count(tmp_path: Path) -> None:
+    first = _add(tmp_path, what="first", ts="2026-10-06T08:00:00Z")
+    target = _add(tmp_path, what="target", ts="2026-10-06T09:00:00Z")
+    last = _add(tmp_path, what="last", ts="2026-10-06T10:00:00Z")
+
+    journal.transition(tmp_path, target, to="superseded", ts="2026-10-06T11:00:00Z")
+
+    lines = (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["id"] for line in lines] == [
+        first,
+        target,
+        last,
+        "J-20261006-04",
+    ]
+
+
+def test_transition_rerenders_target_day_file(tmp_path: Path) -> None:
+    target = _add(tmp_path, what="base", ts="2026-10-06T10:00:00Z")
+
+    journal.transition(tmp_path, target, to="reverted", ts="2026-10-07T09:00:00Z")
+
+    old_day = (tmp_path / "20261006.md").read_text(encoding="utf-8")
+    assert "**Status:** reverted" in old_day
+    new_day = (tmp_path / "20261007.md").read_text(encoding="utf-8")
+    assert f"## J-20261007-01 — Marked {target} as reverted" in new_day
+
+
+def test_transition_same_status_is_noop(tmp_path: Path) -> None:
+    target = _add(tmp_path, what="base", status="open", ts="2026-10-06T10:00:00Z")
+    before = (tmp_path / "events.jsonl").read_bytes()
+
+    result = journal.transition(tmp_path, target, to="open")
+
+    assert result is None
+    assert (tmp_path / "events.jsonl").read_bytes() == before
+
+
+def test_transition_unknown_id(tmp_path: Path) -> None:
+    _add(tmp_path, what="base", ts="2026-10-06T10:00:00Z")
+
+    with pytest.raises(journal.JournalError, match="J-20261006-99"):
+        journal.transition(tmp_path, "J-20261006-99", to="superseded")
+
+
+def test_cli_transition_prints_record_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = _add(tmp_path, what="base", ts="2026-10-06T10:00:00Z")
+
+    code = journal.main(
+        [
+            "transition",
+            target,
+            "--to",
+            "superseded",
+            "--ts",
+            "2026-10-06T11:00:00Z",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert code == 0
+    assert capsys.readouterr().out.strip() == "J-20261006-02"
+
+
+def test_cli_transition_same_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = _add(tmp_path, what="base", status="open", ts="2026-10-06T10:00:00Z")
+
+    code = journal.main(["transition", target, "--to", "open", "--root", str(tmp_path)])
+
+    assert code == 0
+    assert capsys.readouterr().out.strip() == "already open"
+
+
+def test_cli_transition_unknown_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    code = journal.main(
+        ["transition", "J-20261006-99", "--to", "superseded", "--root", str(tmp_path)]
+    )
+
+    assert code == 1
+    assert "J-20261006-99" in capsys.readouterr().err
+
+
+def test_validate_requires_named_superseded(tmp_path: Path) -> None:
+    _write_events(tmp_path, _event(id="J-20261006-01", status="superseded"))
+
+    problems = _problems_text(tmp_path)
+    assert "J-20261006-01" in problems
+    assert "not named in the evidence of a later entry" in problems
+
+
+def test_validate_accepts_transition_record(tmp_path: Path) -> None:
+    target = _add(tmp_path, what="base", ts="2026-10-06T10:00:00Z")
+
+    journal.transition(tmp_path, target, to="reverted", ts="2026-10-06T11:00:00Z")
+
+    assert journal.validate(tmp_path) == []

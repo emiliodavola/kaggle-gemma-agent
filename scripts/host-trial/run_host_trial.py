@@ -9,8 +9,10 @@ Port of the former ``run-host-trial.sh`` / ``run-host-trial.ps1`` (PR #15):
 the same eight phases, by default two tasks (``fastapi_15661``,
 ``fastapi_15588``) against an OpenAI-compatible cloud backend, archived under
 ``runs/``. Set ``HARNESS_TRIAL_TASKS`` (comma-separated instance ids) to
-override the default task set. Stdlib only, so it runs on Windows and Linux
-either as a uv script::
+override the default task set, or pass ``--tasks`` to select against the
+``data/raw/tasks.jsonl`` corpus by exact id, prefix/substring pattern or
+``all`` (``--tasks`` wins over the env var). Stdlib only, so it runs on Windows
+and Linux either as a uv script::
 
     uv run --script scripts/host-trial/run_host_trial.py --results-name run_01
 
@@ -47,6 +49,7 @@ Backend wiring (see ``docs/host-trial-runbook.md`` section 6):
 from __future__ import annotations
 
 import argparse
+import difflib
 import http.client
 import http.server
 import json
@@ -132,9 +135,16 @@ HARNESS_MODEL = "HARNESS_MODEL"
 SESSION_ENV = "HARNESS_TRIAL_SESSION"
 TASKS_ENV = "HARNESS_TRIAL_TASKS"
 #: Where the resolved task list came from, for logging and shadow detection.
+TASK_SOURCE_FLAG = "--tasks"
 TASK_SOURCE_PROCESS_ENV = "process env"
 TASK_SOURCE_ENV_FILE = ".env"
 TASK_SOURCE_DEFAULT = "default"
+#: ``--tasks`` preview: how many resolved ids are printed before ``and N more``.
+TASK_LIST_PREVIEW = 12
+#: ``--tasks`` selector that expands to the whole corpus.
+TASK_ALL_SELECTOR = "all"
+#: ``--tasks`` typo help: how many close corpus candidates an error carries.
+TASK_CANDIDATE_LIMIT = 5
 BACKEND_ENV = "HARNESS_TRIAL_BACKEND"
 #: Opt-in: when set (``lmstudio``/``llamacpp``/``auto``) the runner starts the
 #: local model server via ``serve_local_model.py`` before the eval.
@@ -185,6 +195,20 @@ HARNESS_RUNS: tuple[str, ...] = ("uv", "run", "python", "-m", "kaggle_gemma_agen
 
 class TrialError(Exception):
     """Raised when a trial phase cannot continue."""
+
+
+class TaskSelectionError(TrialError):
+    """Raised when a ``--tasks`` value matches no corpus task id.
+
+    Carries the offending *value* and up to ``TASK_CANDIDATE_LIMIT`` close corpus
+    ids so the operator sees a suggestion instead of a silent empty selection.
+    """
+
+    def __init__(self, value: str, candidates: Sequence[str]) -> None:
+        self.value = value
+        self.candidates = tuple(candidates)
+        hint = f"; closest ids: {', '.join(self.candidates)}" if self.candidates else ""
+        super().__init__(f"--tasks value {value!r} matches no corpus task id{hint}")
 
 
 @dataclass(frozen=True)
@@ -386,19 +410,90 @@ def parse_trial_tasks(
     return task_ids or default
 
 
+def load_corpus_task_ids(tasks_file: Path) -> tuple[str, ...]:
+    """Return the corpus ``instance_id`` list from *tasks_file*, in file order.
+
+    The corpus is ``data/raw/tasks.jsonl`` (one JSON object per line). A missing
+    file raises :class:`TrialError` naming it: ``--tasks`` never falls back to a
+    hard-coded list. Duplicate ids are collapsed while keeping first-seen order.
+    """
+    path = Path(tasks_file)
+    if not path.is_file():
+        raise TrialError(
+            f"tasks corpus not found: {path}. Fetch it first, e.g. `kaggle competitions "
+            f"download -c {COMPETITION} -f tasks.jsonl -p {path.parent}`; --tasks resolves "
+            "ids against the corpus."
+        )
+    ids: list[str] = []
+    seen: set[str] = set()
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise TrialError(f"invalid JSON on line {lineno} of {path}: {exc}") from exc
+        instance_id = record.get("instance_id") if isinstance(record, dict) else None
+        if not isinstance(instance_id, str) or not instance_id:
+            raise TrialError(f"missing 'instance_id' on line {lineno} of {path}")
+        if instance_id not in seen:
+            seen.add(instance_id)
+            ids.append(instance_id)
+    return tuple(ids)
+
+
+def select_trial_tasks(values: Sequence[str], corpus: Sequence[str]) -> tuple[str, ...]:
+    """Expand ``--tasks`` *values* against *corpus* in corpus order, deduplicated.
+
+    ``all`` selects every corpus id; an exact id (case-insensitive) selects that id
+    in corpus spelling; any other value is a case-insensitive prefix match first,
+    then a substring match, so ``fastapi`` selects every ``fastapi_*`` task. A
+    value that matches nothing raises :class:`TaskSelectionError` carrying the
+    value and up to :data:`TASK_CANDIDATE_LIMIT` close candidates, so a typo can
+    never silently select an empty or partial set.
+    """
+    lowered = [task_id.lower() for task_id in corpus]
+    selected: set[str] = set()
+    for value in values:
+        needle = value.lower()
+        if needle == TASK_ALL_SELECTOR:
+            selected.update(corpus)
+            continue
+        if needle in lowered:
+            selected.add(corpus[lowered.index(needle)])
+            continue
+        prefixed = [task_id for task_id, low in zip(corpus, lowered) if low.startswith(needle)]
+        if prefixed:
+            selected.update(prefixed)
+            continue
+        substring = [task_id for task_id, low in zip(corpus, lowered) if needle in low]
+        if substring:
+            selected.update(substring)
+            continue
+        candidates = difflib.get_close_matches(value, corpus, n=TASK_CANDIDATE_LIMIT)
+        raise TaskSelectionError(value, candidates)
+    return tuple(task_id for task_id in corpus if task_id in selected)
+
+
 @dataclass(frozen=True)
 class TaskResolution:
     """Resolved trial task ids plus the source that won.
 
     ``process_value`` and ``env_file_value`` are the raw ``HARNESS_TRIAL_TASKS``
     strings; they let the runner flag a process environment that shadows a
-    different ``.env`` value.
+    different ``.env`` value. ``request``, ``corpus_size`` and ``requested_all``
+    describe a ``--tasks`` selection so :func:`note_task_resolution` can print the
+    request, the count and the whole-corpus warning.
     """
 
     task_ids: tuple[str, ...]
     source: str
     process_value: str
     env_file_value: str
+    request: str = ""
+    corpus_size: int = 0
+    requested_all: bool = False
 
     @property
     def shadowed(self) -> bool:
@@ -413,14 +508,31 @@ def describe_task_resolution(
     environ: Mapping[str, str],
     *,
     default: tuple[str, ...] = TASK_IDS,
+    requested: Sequence[str] | None = None,
+    corpus: Sequence[str] = (),
 ) -> TaskResolution:
     """Resolve the trial task ids and record which source won.
 
-    Precedence mirrors :func:`resolve_trial_tasks`: process environment, then
-    ``.env``, then *default*.
+    Precedence: the ``--tasks`` *requested* values (expanded against *corpus* by
+    :func:`select_trial_tasks`) win over the process environment, then ``.env``,
+    then *default*. When *requested* is falsy the env/default behaviour is
+    unchanged.
     """
     process_value = environ.get(TASKS_ENV, "")
     env_file_value = env_file_values.get(TASKS_ENV, "")
+    if requested:
+        values = parse_trial_tasks(",".join(requested), default=())
+        if not values:
+            raise TrialError("--tasks was given with no task ids")
+        return TaskResolution(
+            task_ids=select_trial_tasks(values, corpus),
+            source=TASK_SOURCE_FLAG,
+            process_value=process_value,
+            env_file_value=env_file_value,
+            request=", ".join(requested),
+            corpus_size=len(corpus),
+            requested_all=any(value.lower() == TASK_ALL_SELECTOR for value in values),
+        )
     if process_value:
         source = TASK_SOURCE_PROCESS_ENV
     elif env_file_value:
@@ -446,8 +558,33 @@ def resolve_trial_tasks(
     return describe_task_resolution(env_file_values, environ, default=default).task_ids
 
 
+def _format_task_ids(task_ids: Sequence[str], *, limit: int | None = None) -> str:
+    """Join *task_ids*, collapsing the tail into ``and N more`` when over *limit*."""
+    if limit is not None and len(task_ids) > limit:
+        head = ", ".join(task_ids[:limit])
+        return f"{head} and {len(task_ids) - limit} more"
+    return ", ".join(task_ids)
+
+
 def note_task_resolution(env_file: Path, resolution: TaskResolution) -> None:
-    """Log the task-list source and warn when the process env shadows ``.env``."""
+    """Log the task-list source, request and shadow/all warnings.
+
+    A ``--tasks`` resolution prints the request, the resolved count and a
+    truncated id list, and warns when the request was ``all``. The env/default
+    paths print exactly what they did before the flag existed.
+    """
+    if resolution.source == TASK_SOURCE_FLAG:
+        note(f"trial tasks source: {TASK_SOURCE_FLAG} ({resolution.request})")
+        if resolution.requested_all:
+            note(
+                f"WARNING: --tasks {TASK_ALL_SELECTOR} selects the whole corpus "
+                f"({resolution.corpus_size} tasks); this run is long."
+            )
+        note(
+            f"trial tasks ({len(resolution.task_ids)}): "
+            f"{_format_task_ids(resolution.task_ids, limit=TASK_LIST_PREVIEW)}"
+        )
+        return
     if resolution.source == TASK_SOURCE_DEFAULT:
         note(
             f"trial tasks source: {TASK_SOURCE_DEFAULT} "
@@ -1698,8 +1835,12 @@ def build_image(paths: TrialPaths) -> None:
     )
 
 
-def resolve_backend_env(env_file: Path) -> dict[str, str]:
-    """Phase 6: load ``.env``/environment, abort if the key is empty, mask output."""
+def resolve_backend_env(env_file: Path, *, task_ids: Sequence[str] | None = None) -> dict[str, str]:
+    """Phase 6: load ``.env``/environment, abort if the key is empty, mask output.
+
+    *task_ids* is the already-resolved trial list (from ``--tasks`` or the
+    env/default precedence); when omitted it is resolved from the environment.
+    """
     phase("Phase 6/8 (runbook sec. 5): backend key (environment only)")
 
     file_values = load_env_file(env_file)
@@ -1710,8 +1851,10 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
             "before running; never pass it as an argument (runbook sec. 5)."
         )
     resolved[SESSION_ENV] = resolve_trial_session(file_values, os.environ)
-    task_ids = resolve_trial_tasks(file_values, os.environ)
-    resolved[TASKS_ENV] = ",".join(task_ids)
+    resolved_ids = (
+        tuple(task_ids) if task_ids is not None else resolve_trial_tasks(file_values, os.environ)
+    )
+    resolved[TASKS_ENV] = ",".join(resolved_ids)
 
     for name, value in resolved.items():
         if value:
@@ -1724,7 +1867,7 @@ def resolve_backend_env(env_file: Path) -> dict[str, str]:
     note(f"trial backend: {resolved[BACKEND_ENV]} -> {resolved[OPENAI_BASE_URL]}")
     note(f"{HARNESS_MODEL}: {resolved[HARNESS_MODEL]} (trial-only; not part of the submission)")
     note(f"trial session: {resolved[SESSION_ENV]} -> {OPENCODE_SESSION_HEADER} header")
-    note(f"trial tasks: {', '.join(task_ids)}")
+    note(f"trial tasks: {', '.join(resolved_ids)}")
     return resolved
 
 
@@ -1732,9 +1875,14 @@ def run_eval(
     paths: TrialPaths,
     env: Mapping[str, str],
     *,
+    task_ids: Sequence[str] | None = None,
     skip_backend_smoke: bool = False,
 ) -> None:
-    """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``."""
+    """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``.
+
+    *task_ids* is the resolved trial list; when omitted it is parsed from
+    ``HARNESS_TRIAL_TASKS`` in *env*.
+    """
     phase("Phase 7/8 (runbook sec. 6): swegemma eval (trial tasks, competition budgets)")
     note(f"task wheels: {paths.wheels_dir} (auto-discovered via the tasks directory)")
     removed = clear_swegemma_site_packages_cache()
@@ -1772,7 +1920,9 @@ def run_eval(
         note(f"backend smoke ok: {harness_model} -> {reply!r}")
 
     paths.results_dir.mkdir(parents=True, exist_ok=True)
-    task_ids = parse_trial_tasks(env.get(TASKS_ENV, ""))
+    eval_task_ids = (
+        tuple(task_ids) if task_ids is not None else parse_trial_tasks(env.get(TASKS_ENV, ""))
+    )
     try:
         run_cmd(
             build_eval_args(
@@ -1781,7 +1931,7 @@ def run_eval(
                 submission_dir=paths.submission_dir,
                 results_dir=paths.results_dir,
                 models_yaml=paths.models_yaml,
-                task_ids=task_ids,
+                task_ids=eval_task_ids,
             ),
             what="swegemma eval",
         )
@@ -1918,6 +2068,7 @@ def run(
     results_name: str,
     env_file: Path,
     *,
+    tasks: Sequence[str] | None = None,
     allow_partial_wheels: bool = False,
     allow_incomplete_wheels: bool = False,
     repair_sandbox_deps: bool = False,
@@ -1925,12 +2076,21 @@ def run(
     launch_model: bool = False,
     keep_model: bool = False,
 ) -> Path:
-    """Execute all eight trial phases and return the archived run directory."""
+    """Execute all eight trial phases and return the archived run directory.
+
+    *tasks* holds the ``--tasks`` selector values (repeated or comma-separated);
+    when given they win over ``HARNESS_TRIAL_TASKS`` and are expanded against the
+    ``data/raw/tasks.jsonl`` corpus.
+    """
     paths = paths_for(repo_root, results_name)
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
     env_file_values = load_env_file(env_file)
-    resolution = describe_task_resolution(env_file_values, os.environ)
+    requested = tuple(tasks) if tasks else ()
+    corpus = load_corpus_task_ids(paths.tasks_file) if requested else ()
+    resolution = describe_task_resolution(
+        env_file_values, os.environ, requested=requested, corpus=corpus
+    )
     note_task_resolution(env_file, resolution)
     task_ids = resolution.task_ids
     fetch_data(paths, task_ids)
@@ -1945,7 +2105,7 @@ def run(
     )
     install_swegemma(paths)
     build_image(paths)
-    env = resolve_backend_env(env_file)
+    env = resolve_backend_env(env_file, task_ids=task_ids)
     merged_env = {**env_file_values, **os.environ}
     wants_launch = launch_model or should_launch_local_model(env_file_values, os.environ)
     if wants_launch:
@@ -1954,7 +2114,7 @@ def run(
     if run_id is not None:
         emit_run_started(paths.repo_root, run_id, task_ids)
     try:
-        run_eval(paths, env, skip_backend_smoke=skip_backend_smoke)
+        run_eval(paths, env, task_ids=task_ids, skip_backend_smoke=skip_backend_smoke)
     finally:
         if wants_launch and not keep_model:
             launch_local_model(paths, merged_env, "stop")
@@ -2030,6 +2190,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="do not stop the launched model server when the trial ends",
     )
+    parser.add_argument(
+        "--tasks",
+        action="append",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "task selector resolving against data/raw/tasks.jsonl; repeatable, "
+            "comma-separated values also accepted. 'all' selects the whole corpus, an "
+            "exact id is matched case-insensitively, anything else is a case-insensitive "
+            "prefix pattern then substring (e.g. 'fastapi' selects every fastapi_* task). "
+            "Overrides HARNESS_TRIAL_TASKS."
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = REPO_ROOT
@@ -2039,6 +2212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             repo_root,
             args.results_name,
             env_file,
+            tasks=args.tasks,
             allow_partial_wheels=args.allow_partial_wheels,
             allow_incomplete_wheels=args.allow_incomplete_wheels,
             repair_sandbox_deps=args.repair_sandbox_deps,
