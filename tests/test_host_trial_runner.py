@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import email.message
+import hashlib
 import http.server
 import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -1691,3 +1693,76 @@ def test_download_missing_wheels_raises_on_a_nonzero_exit(
 
     with pytest.raises(runner.TrialError, match="no matching distribution found"):
         runner.download_missing_wheels(["typing-inspection"], tmp_path / "wheels-extra")
+
+
+def test_build_archive_args_includes_optional_timestamp() -> None:
+    args = runner.build_archive_args(
+        Path("results/run_01"),
+        Path("junit"),
+        Path("data/raw/tasks.jsonl"),
+        timestamp="20260101T000000Z",
+    )
+
+    assert args[args.index("--timestamp") + 1] == "20260101T000000Z"
+    assert "--timestamp" not in runner.build_archive_args(Path("r"), Path("j"), Path("t"))
+
+
+def test_harness_run_id_uses_the_archiver_source() -> None:
+    run_id = runner.harness_run_id()
+
+    assert run_id is not None
+    assert re.fullmatch(r"\d{8}T\d{6}Z", run_id)
+
+
+def _write_runner_submission(root: Path) -> dict[str, str]:
+    """Write the three hashed submission files and return expected digests."""
+    files = {
+        "submission/prompts/system.md": "prompt-body\n",
+        "submission/configs/sampling.yaml": "temperature: 0\n",
+        "submission/eval_config.yaml": "budget: 1\n",
+    }
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in files.items()}
+
+
+def test_emit_run_started_records_hashes_counts_and_is_idempotent(tmp_path: Path) -> None:
+    expected = _write_runner_submission(tmp_path)
+    journal_root = tmp_path / "journal"
+    task_ids = ("fastapi_15661", "fastapi_15588")
+
+    assert runner.emit_run_started(
+        tmp_path, "20260101T000000Z", task_ids, journal_root=journal_root
+    )
+    assert runner.emit_run_started(
+        tmp_path, "20260101T000000Z", task_ids, journal_root=journal_root
+    )
+
+    lines = (journal_root / "events.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["type"] == "run_started"
+    assert event["actor"] == "runner"
+    assert event["refs"]["run_id"] == "20260101T000000Z"
+    assert event["counts"] == {"tasks": 2}
+    assert event["evidence"] == list(task_ids)
+    assert event["hashes"]["prompt"] == expected["submission/prompts/system.md"]
+    assert event["hashes"]["sampling"] == expected["submission/configs/sampling.yaml"]
+    assert event["hashes"]["eval_config"] == expected["submission/eval_config.yaml"]
+    assert event["hashes"]["repo_commit"] is None
+
+
+def test_emit_run_started_warns_when_journal_unwritable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory\n", encoding="utf-8")
+
+    recorded = runner.emit_run_started(
+        tmp_path, "20260101T000000Z", ("t",), journal_root=blocker / "journal"
+    )
+
+    assert recorded is False
+    assert "warning:" in capsys.readouterr().err

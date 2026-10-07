@@ -39,12 +39,15 @@ like the other helpers.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 from kaggle_gemma_agent import run_report
 
@@ -62,6 +65,13 @@ MANIFEST = "manifest.json"
 
 ARCHIVE_COMMAND = "archive"
 REPORT_COMMAND = "report"
+
+#: Repository root resolved from this package's location, for provenance hashes.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+#: Submission files hashed into a run's journal provenance.
+PROMPT_FILE = "submission/prompts/system.md"
+SAMPLING_FILE = "submission/configs/sampling.yaml"
+EVAL_CONFIG_FILE = "submission/eval_config.yaml"
 
 
 class HarnessRunsError(Exception):
@@ -145,7 +155,7 @@ def archive_run(
         raise HarnessRunsError(f"results directory does not exist: {results_dir}")
 
     runs_root = Path(runs_root)
-    stamp = timestamp or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = timestamp or new_run_stamp()
     run_dir = runs_root / stamp
     if run_dir.exists():
         raise HarnessRunsError(f"run directory already exists: {run_dir}")
@@ -203,6 +213,147 @@ def archive_run(
     return run_dir
 
 
+def new_run_stamp() -> str:
+    """Return a fresh UTC run stamp (``YYYYMMDDTHHMMSSZ``).
+
+    This is the single source of the archiver run id, so the runner can compute
+    the same id before the run and hand it back through ``--timestamp``.
+    """
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _sha256_or_none(path: Path) -> str | None:
+    """Return the hex ``sha256`` of *path*, or ``None`` when it is not a file."""
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def repo_commit(repo_root: Path) -> str | None:
+    """Return the HEAD sha, suffixed ``-dirty`` when the worktree is dirty.
+
+    Returns ``None`` when *repo_root* is not a readable git repository.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    sha = head.stdout.strip()
+    if head.returncode != 0 or not sha:
+        return None
+    try:
+        status = subprocess.run(
+            ["git", "-C", str(repo_root), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return sha
+    if status.returncode == 0 and status.stdout.strip():
+        return f"{sha}-dirty"
+    return sha
+
+
+def provenance_hashes(repo_root: Path | None = None) -> dict[str, str | None]:
+    """Return the run provenance hashes, ``None`` for any missing input.
+
+    Keys are ``prompt``, ``sampling``, ``eval_config`` (sha256 of the submission
+    files) and ``repo_commit`` (HEAD sha, ``-dirty`` when the worktree is dirty).
+    """
+    root = Path(repo_root) if repo_root is not None else REPO_ROOT
+    return {
+        "prompt": _sha256_or_none(root / PROMPT_FILE),
+        "sampling": _sha256_or_none(root / SAMPLING_FILE),
+        "eval_config": _sha256_or_none(root / EVAL_CONFIG_FILE),
+        "repo_commit": repo_commit(root),
+    }
+
+
+def failure_kinds(report: Mapping[str, Any]) -> dict[str, int]:
+    """Return ``failure_kind -> count`` from an archived report (passes skipped).
+
+    Mirrors the aggregation in :func:`run_report.render_summary`; a task without
+    a classified kind is counted as ``unknown``.
+    """
+    kinds: dict[str, int] = {}
+    for task in report.get("tasks") or []:
+        if not isinstance(task, Mapping):
+            continue
+        if task.get("status") == "pass":
+            continue
+        kind = str(task.get("failure_kind") or "unknown")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    return kinds
+
+
+def emit_run_finished(
+    run_dir: Path,
+    *,
+    journal_root: Path | None = None,
+    repo_root: Path | None = None,
+) -> bool:
+    """Append a deterministic ``run_finished`` journal event; never raise.
+
+    ``what`` and ``why`` depend only on the run id, so re-finalizing the same run
+    is suppressed by the journal as a duplicate instead of double-logged. Returns
+    ``True`` when the event is present (freshly written or already recorded) and
+    ``False`` when the journal is unavailable or unwritable, after one warning.
+    """
+    try:
+        from kaggle_gemma_agent import journal as journal_module
+    except ImportError as exc:
+        print(f"warning: journal unavailable ({exc}); run_finished not recorded", file=sys.stderr)
+        return False
+
+    run_dir = Path(run_dir)
+    try:
+        report = run_report.load_report(run_dir)
+        run_id = str(report.get("run_id") or run_dir.name)
+        totals = report.get("totals") or {}
+        counts: dict[str, Any] = {
+            "tasks": totals.get("tasks", 0),
+            "resolved": totals.get("resolved", 0),
+            "rate": totals.get("resolution_rate"),
+        }
+        counts.update(failure_kinds(report))
+        index_path = str(report.get("index_path") or (run_dir.parent / run_report.INDEX_FILE))
+        evidence = [
+            str(report.get("report_path") or (run_dir / run_report.REPORT_FILE)),
+            str(run_dir / run_report.STATUS_FILE),
+            index_path,
+        ]
+        hashes = provenance_hashes(repo_root)
+        root = journal_module.default_root() if journal_root is None else Path(journal_root)
+        journal_module.append_event(
+            root,
+            type="run_finished",
+            actor="runner",
+            what=f"Run {run_id} finished",
+            why=f"Runner finalized and archived run {run_id}",
+            evidence=evidence,
+            status="applied",
+            refs={"run_id": run_id},
+            hashes=cast("Mapping[str, str]", hashes),
+            counts=counts,
+        )
+        return True
+    except journal_module.DuplicateEntryError:
+        return True
+    except Exception as exc:
+        print(f"warning: journal run_finished not recorded: {exc}", file=sys.stderr)
+        return False
+
+
 def _main_archive(argv: Sequence[str]) -> int:
     """Run the archive subcommand (also the backward-compatible bare form)."""
     parser = argparse.ArgumentParser(
@@ -231,6 +382,11 @@ def _main_archive(argv: Sequence[str]) -> int:
         action="store_true",
         help="archive artifacts only; skip report.json/STATUS/index.jsonl",
     )
+    parser.add_argument(
+        "--no-journal",
+        action="store_true",
+        help="skip the run_finished change-journal entry",
+    )
     args = parser.parse_args(list(argv))
 
     try:
@@ -251,6 +407,8 @@ def _main_archive(argv: Sequence[str]) -> int:
     print(f"archived {args.results_dir} -> {run_dir}")
     if not args.no_report:
         print(run_report.read_status(run_dir), end="")
+        if not args.no_journal:
+            emit_run_finished(run_dir)
     return 0
 
 
@@ -269,6 +427,11 @@ def _main_report(argv: Sequence[str]) -> int:
     parser.add_argument("--tasks", default=None, type=Path, help="tasks.jsonl for test sets")
     parser.add_argument("--backend", default=None, help="backend/model name override")
     parser.add_argument("--runs-root", default=None, type=Path)
+    parser.add_argument(
+        "--no-journal",
+        action="store_true",
+        help="skip the run_finished change-journal entry",
+    )
     args = parser.parse_args(list(argv))
 
     try:
@@ -280,6 +443,8 @@ def _main_report(argv: Sequence[str]) -> int:
                 backend=args.backend,
             )
         print(run_report.read_status(args.run_dir), end="")
+        if not args.no_journal:
+            emit_run_finished(args.run_dir)
     except run_report.RunReportError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

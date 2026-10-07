@@ -13,6 +13,7 @@ from which raw artifact it was derived.
 | run analysis | `docs/runs/<run-id>/` | Append-only, never rewritten. One directory per run id. Status is `current`, `superseded-by <path>` or `archived`. |
 | task digest | `docs/tasks/` | Regenerable from `data/raw/tasks.jsonl`; regenerate rather than hand-edit. |
 | proposal | `docs/proposals/` | Dated, superseded but never deleted. Status is `open`, `accepted`, `superseded-by <path>` or `implemented in PR #N`. |
+| journal | `docs/journal/` | Append-only change log: one human file per UTC day, rendered from the machine file `events.jsonl`; never rewritten. Revise by adding a superseding or reverting entry. |
 | change tracker | `odd/tasks/` | Per-feature tracker; goal, decisions, checkboxed tasks and evidence. Never deleted. |
 
 ## Header rule
@@ -23,7 +24,7 @@ document itself; do not invent them.
 ```text
 ---
 Date: <YYYY-MM-DD>
-Genre: run analysis | task digest | proposal | living reference
+Genre: run analysis | task digest | proposal | living reference | journal
 Status: current | superseded-by <path> | archived
 Scope: <one line: what it covers and what it does not>
 Source of truth: <the raw paths it was derived from, plus the read date>
@@ -71,6 +72,8 @@ the evidence. Run analyses are append-only: to revise one, add a new document
 | [host-trial-runbook.md](host-trial-runbook.md) | living reference | current | Operator runbook to run a real swegemma trial on Windows/Docker or Linux/WSL2. | — | scripts/host-trial/run_host_trial.py and the harness contract (read 2026-10-06) | 2026-10-04 |
 | [run-reports.md](run-reports.md) | living reference | current | Handoff contract for file-based run reports: runs/ layout, report.json schema, STATUS polling. | — | src/kaggle_gemma_agent/harness_runs.py, run_report.py (read 2026-10-06) | 2026-10-03 |
 | [skill-stack-inventory.md](skill-stack-inventory.md) | living reference | current | Inventory of candidate skills (86 items, 8 gaps) with compatibility, dependencies and licenses. | — | upstream SKILL.md files and repo metadata (read 2026-10-06) | 2026-09-28 |
+| [journal/README.md](journal/README.md) | journal | current | Genre spec for the change journal: two layers, entry schema, human file format, CLI and CI guard. | — | docs/journal/events.jsonl, src/kaggle_gemma_agent/journal.py (read 2026-10-07) | 2026-10-07 |
+| [journal/events.jsonl](journal/events.jsonl) | journal | current | Machine layer of the change journal: append-only JSON Lines, the source of truth for the human day files. | — | docs/journal/events.jsonl (read 2026-10-07) | 2026-10-07 |
 
 ## Change trackers (`odd/tasks/`)
 
