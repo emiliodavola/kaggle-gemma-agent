@@ -320,10 +320,11 @@ def emit_run_finished(
         report = run_report.load_report(run_dir)
         run_id = str(report.get("run_id") or run_dir.name)
         totals = report.get("totals") or {}
+        rate = totals.get("resolution_rate")
         counts: dict[str, Any] = {
             "tasks": totals.get("tasks", 0),
             "resolved": totals.get("resolved", 0),
-            "rate": totals.get("resolution_rate"),
+            "rate": round(rate, 4) if isinstance(rate, (int, float)) else rate,
         }
         counts.update(failure_kinds(report))
         index_path = str(report.get("index_path") or (run_dir.parent / run_report.INDEX_FILE))

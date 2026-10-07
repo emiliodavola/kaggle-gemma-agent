@@ -311,6 +311,71 @@ def append_event(
     return identifier if isinstance(identifier, str) else str(identifier)
 
 
+def transition(
+    root: Path,
+    identifier: str,
+    *,
+    to: str,
+    why: str | None = None,
+    evidence: Sequence[str] = (),
+    actor: str = "opencode",
+    ts: str | None = None,
+) -> str | None:
+    """Record a status transition, rewriting only the target entry's status.
+
+    Appends a record entry whose ``what`` is ``Marked <id> as <status>`` and whose
+    evidence names the target id, then rewrites only the ``status`` field of the
+    target entry's line. Both affected day files are re-rendered. Returns the new
+    record entry id, or ``None`` when *identifier* already has status *to* (in
+    which case nothing is written). Raises :class:`JournalError` for an unknown
+    id or an invalid status/actor.
+    """
+    root = Path(root)
+    _require_choice("status", to, STATUSES)
+    _require_choice("actor", actor, ACTORS)
+    events = read_events(root)
+    position: int | None = None
+    target: Mapping[str, Any] | None = None
+    for index, event in enumerate(events):
+        if event.get("id") == identifier:
+            position = index
+            target = event
+            break
+    if position is None or target is None:
+        raise JournalError(f"entry not found: {identifier}")
+
+    current = str(target["status"])
+    if current == to:
+        return None
+
+    default_why = f"status transition of {identifier} to {to}"
+    resolved_why = why.strip() if why is not None and why.strip() else default_why
+    record_id = append_event(
+        root,
+        type="reversal" if to == "reverted" else "change",
+        actor=actor,
+        what=f"Marked {identifier} as {to}",
+        why=resolved_why,
+        evidence=[*evidence, identifier],
+        ts=ts,
+    )
+    record_event = _read_event(root, record_id)
+    record_date = _event_date(str(record_event["ts"]))
+    target_date = _event_date(str(target["ts"]))
+
+    path = root / EVENTS_FILE
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rewritten = dict(target)
+    rewritten["status"] = to
+    lines[position] = json.dumps(rewritten, ensure_ascii=False)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+    render_day(root, target_date)
+    if record_date != target_date:
+        render_day(root, record_date)
+    return record_id
+
+
 def list_events(
     root: Path,
     *,
@@ -395,6 +460,21 @@ def validate(root: Path) -> list[str]:
                     f"event {index} ({identifier}): id date {id_date} != ts date {event_date}"
                 )
         dated.setdefault(event_date, []).append(event)
+
+    for position, event in enumerate(events):
+        status = event.get("status")
+        if status not in ("superseded", "reverted"):
+            continue
+        identifier = event.get("id")
+        later_named = any(
+            isinstance(other.get("evidence"), list) and identifier in other["evidence"]
+            for other in events[position + 1 :]
+        )
+        if not later_named:
+            problems.append(
+                f"event {position + 1} ({identifier}): status {status} is not named "
+                "in the evidence of a later entry"
+            )
 
     existing_dates = (
         {
@@ -504,6 +584,29 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_transition(args: argparse.Namespace) -> int:
+    root = _resolve_root(args.root)
+    evidence = [item for group in args.evidence for item in group]
+    try:
+        identifier = transition(
+            root,
+            args.id,
+            to=args.to,
+            why=args.why,
+            evidence=evidence,
+            actor=args.actor,
+            ts=args.ts,
+        )
+    except JournalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if identifier is None:
+        print(f"already {args.to}")
+    else:
+        print(identifier)
+    return 0
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     root = _resolve_root(args.root)
     problems = validate(root)
@@ -543,6 +646,17 @@ def _build_parser() -> argparse.ArgumentParser:
     render.add_argument("--date")
     render.add_argument("--root", type=Path)
 
+    move = subparsers.add_parser(
+        "transition", help="record a status transition and rewrite the target status"
+    )
+    move.add_argument("id")
+    move.add_argument("--to", required=True, choices=STATUSES)
+    move.add_argument("--why")
+    move.add_argument("--evidence", action="append", nargs="+", default=[])
+    move.add_argument("--actor", default="opencode", choices=ACTORS)
+    move.add_argument("--ts")
+    move.add_argument("--root", type=Path)
+
     listing = subparsers.add_parser("list", help="print a compact event table")
     listing.add_argument("--type", choices=TYPES)
     listing.add_argument("--status", choices=STATUSES)
@@ -564,6 +678,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_render(args)
     if args.command == "list":
         return _cmd_list(args)
+    if args.command == "transition":
+        return _cmd_transition(args)
     return _cmd_validate(args)
 
 

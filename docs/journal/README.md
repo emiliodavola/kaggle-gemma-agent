@@ -104,7 +104,9 @@ the render subcommand instead.
 
 1. **Append-only.** An entry is never edited and never deleted. To revise one,
    add a new entry that supersedes or reverts it, and set the old entry's
-   `status` to `superseded` or `reverted`.
+   `status` to `superseded` or `reverted`. The one controlled exception is
+   `transition`, which rewrites only the target entry's `status` field and
+   appends the record entry that explains the change.
 2. **One entry per change or decision**, written in the same PR as the change.
 3. **Evidence is counts and paths, never causality.** Without randomisation a
    batch comparison is `"29/48 -> X/48 on a different batch"`, never
@@ -112,6 +114,9 @@ the render subcommand instead.
 4. **Stable, exact schema.** The key set and key order above are fixed. Do not
    add extra keys.
 5. **UTC everywhere.** Both `ts` and the day file are in UTC.
+6. **A transition is auditable.** An entry with status `superseded` or
+   `reverted` must be named in a later entry's `evidence`; `validate` rejects a
+   journal where it is not.
 
 ## How to add an entry
 
@@ -139,8 +144,13 @@ Other subcommands:
   `events.jsonl`; idempotent.
 - `list [--type T] [--status S] [--since ISO] [--date YYYY-MM-DD] [--root PATH]`
   — print `id | ts | type | status | what`.
+- `transition <id> --to <status> [--why TEXT] [--evidence TEXT ...]` — append a
+  record entry whose `what` is `Marked <id> as <status>`, rewrite only that
+  entry's `status` field, and re-render its day file.
 - `validate [--root PATH]` — check unique ids, valid enums, parseable `ts`, an
-  exact and ordered key set, and that every day file matches a fresh render.
+  exact and ordered key set, that every day file matches a fresh render, and
+  that an entry with status `superseded` or `reverted` is named in a later
+  entry's `evidence`.
 
 `--root` defaults to `docs/journal`, resolved from the package location, so the
 commands work from any directory.
@@ -163,6 +173,15 @@ commands work from any directory.
    `docs/journal/20261007.md`.
 3. CI runs the guard: because the PR touched `submission/` and a path under
    `docs/journal/` also changed, the gate passes.
+
+## Run provenance and re-reporting
+
+The runner records a run's provenance in the `hashes` and `counts` of its
+journal entries. The authoritative hashes are the ones `run_started` emits
+before the agent starts. Re-running the archiver on an archived run hashes the
+**current** submission, not the one that run used, so a re-report of an old run
+would attach hashes that do not describe it. Pass `--no-journal` when
+re-reporting an old run.
 
 ## How CI enforces it
 
