@@ -71,7 +71,7 @@ the evidence. Run analyses are append-only: to revise one, add a new document
 | [competitive-options-playbook.md](competitive-options-playbook.md) | living reference | current | Working playbook of levers to raise Resolution Rate, conditioned by the sandbox constraints. | — | submission/, scripts/host-trial/, docs/, odd/tasks/ (read 2026-10-06) | 2026-10-06 |
 | [harness-logging-contract.md](harness-logging-contract.md) | living reference | current | What the swegemma harness logs per task and what is required to run a local trial. | — | data/raw/HARNESS_README.md, data/raw/tasks.jsonl, data/raw/docker/ (read 2026-10-06) | 2026-09-30 |
 | [host-trial-runbook.md](host-trial-runbook.md) | living reference | current | Operator runbook to run a real swegemma trial on Windows/Docker or Linux/WSL2. | — | scripts/host-trial/run_host_trial.py and the harness contract (read 2026-10-06) | 2026-10-04 |
-| [run-reports.md](run-reports.md) | living reference | current | Handoff contract for file-based run reports: runs/ layout, report.json schema, STATUS polling. | — | src/kaggle_gemma_agent/harness_runs.py, run_report.py (read 2026-10-06) | 2026-10-03 |
+| [run-reports.md](run-reports.md) | living reference | current | Handoff contract for file-based run reports: runs/ layout, report.json schema, STATUS polling, manifest provenance. | — | src/kaggle_gemma_agent/harness_runs.py, run_report.py (read 2026-10-07) | 2026-10-07 |
 | [skill-stack-inventory.md](skill-stack-inventory.md) | living reference | current | Inventory of candidate skills (86 items, 8 gaps) with compatibility, dependencies and licenses. | — | upstream SKILL.md files and repo metadata (read 2026-10-06) | 2026-09-28 |
 | [journal/README.md](journal/README.md) | journal | current | Genre spec for the change journal: two layers, entry schema, human file format, CLI and CI guard. | — | docs/journal/events.jsonl, src/kaggle_gemma_agent/journal.py (read 2026-10-07) | 2026-10-07 |
 | [journal/events.jsonl](journal/events.jsonl) | journal | current | Machine layer of the change journal: append-only JSON Lines, the source of truth for the human day files. | — | docs/journal/events.jsonl (read 2026-10-07) | 2026-10-07 |
@@ -82,6 +82,7 @@ Genre: change tracker. One file per feature/finding; goal, decisions,
 checkboxed tasks and evidence. These live outside `docs/` but are reachable
 from here.
 
+- [cheap-improvement-wins.md](../odd/tasks/cheap-improvement-wins.md)
 - [code-analyzer-subagent.md](../odd/tasks/code-analyzer-subagent.md)
 - [configurable-system-prompt.md](../odd/tasks/configurable-system-prompt.md)
 - [github-issue-template.md](../odd/tasks/github-issue-template.md)

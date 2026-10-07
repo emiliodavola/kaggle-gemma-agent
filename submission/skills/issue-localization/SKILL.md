@@ -15,6 +15,9 @@ Load for any issue-shaped task: bug report, traceback, failing test name, or fea
 - The tests are the spec: before editing, read the test that asserts the new
   behaviour and use its exact symbol names, message strings, status codes, and
   aliases verbatim; when issue text and test disagree, the test wins.
+- Before the first edit, run the target test once to capture its baseline
+  (`pytest <file>::<node>`). A node that fails identically before and after in a
+  file you did not edit is pre-existing: record it and submit.
 - Cap this phase at ~10 calls; `submit_patch` and `get_status` are free (see `budget-aware-tool-use`).
 
 ## Execution Steps
