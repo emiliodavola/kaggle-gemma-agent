@@ -64,6 +64,11 @@ Local-only paths (`data/`, `runs/`, `tmp/`, `.agents/`) are git-ignored.
 - **Host trial** (`scripts/host-trial/run_host_trial.py`) — the eight-phase host
   trial; see `docs/host-trial-runbook.md`.
 - **Skills** — 12 skills under `submission/skills/` (one `SKILL.md` each).
+- **Change journal** (`src/kaggle_gemma_agent/journal.py`) — the chronological,
+  cross-cutting log of changes and decisions: `uv run python -m
+  kaggle_gemma_agent.journal add|render|list|validate`; a PR touching
+  `submission/`, `docs/`, `scripts/host-trial/` or `harness_runs.py` must carry
+  an entry. See `docs/journal/README.md`.
 
 ## Compliance gate
 
