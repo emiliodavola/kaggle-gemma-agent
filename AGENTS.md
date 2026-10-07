@@ -11,14 +11,55 @@ the fraction of tasks the agent resolves within the harness budget.
 
 Base model: `gemma-4-31b-it-qat-w4a16-ct`.
 
+## Language
+
+Everything in this repository is written in **English**: documentation, issues,
+pull requests, commit messages, code comments and identifiers. No Spanish or any
+other language, in any file, including analysis documents. If a document is
+written in another language, translate it before merging.
+
+Single exception: `README_ES.md`, the Spanish translation of `README.md`, is kept
+on purpose for outreach. Nothing else in the repository is exempt.
+
+## Documentation
+
+`docs/README.md` is the single entry point and the document index. It is
+updated in the same PR that adds or moves any document.
+
+Every document belongs to one of four genres:
+
+- **living reference** — stable name, no date in the name, updated in place
+  (`docs/`). Status `current`.
+- **run analysis** — append-only, never rewritten; one directory per run id
+  (`docs/runs/<run-id>/`). To revise one, add a new document and mark the old
+  with `Status: superseded-by <path>`.
+- **task digest** — regenerable from `data/raw/tasks.jsonl` (`docs/tasks/`);
+  regenerate instead of hand-editing.
+- **proposal** — dated, superseded but never deleted (`docs/proposals/`).
+
+Every document starts with a six-field header block (`Date`, `Genre`, `Status`,
+`Scope`, `Source of truth`, `Limits`); fill the values from the document itself.
+
+The raw artifacts are the source of truth: `runs/`, `results/` and `data/raw/`.
+A document that disagrees with a raw artifact is wrong: report the discrepancy
+and fix the document, never silently rewrite the evidence. Never delete
+evidence.
+
+`engram` is agent recall, not documentation. Store one pointer per deliverable
+(title, 2-3 lines, path, run, status, PR) and never the content, and never a
+volatile number without an "as of <date>" stamp.
+
 ## Layout
 
 ```
 .
 ├── AGENTS.md                     # this file
 ├── README.md                     # public sketch / quickstart
-├── docs/                         # competition notes and reference material
-│   └── reporte-competencia.md    # competition analysis (Spanish)
+├── docs/                         # documentation (index: docs/README.md)
+│   ├── README.md                 # single entry point and document index
+│   ├── runs/<run-id>/            # append-only run analyses
+│   ├── tasks/                    # task digests (regenerable from tasks.jsonl)
+│   └── proposals/                # dated proposals (superseded, never deleted)
 ├── data/                         # local data (raw is git-ignored)
 ├── src/
 │   └── kaggle_gemma_4_developer_agent_competition/

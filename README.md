@@ -34,7 +34,7 @@ Kaggle API docs: <https://www.kaggle.com/docs/api>. Never commit the token.
 ├── AGENTS.md               # operating guide (uv, git, submission, budgets)
 ├── README.md               # this file
 ├── README_ES.md            # Spanish translation of this file
-├── docs/                   # competition notes, contracts, runbook, reports
+├── docs/                   # documentation (index: docs/README.md)
 ├── odd/tasks/              # per-feature tracker (goal, tasks, evidence)
 ├── scripts/host-trial/     # cross-platform host trial runner
 ├── src/kaggle_gemma_agent/ # submission packer, harness runs, run reports

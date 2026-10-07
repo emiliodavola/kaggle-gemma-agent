@@ -10,7 +10,7 @@ remove duplicated rules (dedupe), rewrite each trigger, delete the stale
 
 ## Context and evidence
 
-`docs/skills-redesign-proposal.md` (versioned from this change) has the full
+`docs/proposals/skills-redesign.md` (versioned from this change) has the full
 analysis. Summary:
 
 - 12 `SKILL.md` = 469 lines / ~19.5 KB / ~5.6k tokens, loaded **every turn**
@@ -26,7 +26,7 @@ analysis. Summary:
    The **loop rules are deferred** to a second iteration, after measuring
    whether v3 already moved the loop shapes (`trace_metrics.py`).
 2. `skill-stack/` is deleted; `submission/skills/` is the single source.
-3. The proposal lives at `docs/skills-redesign-proposal.md`.
+3. The proposal lives at `docs/proposals/skills-redesign.md`.
 
 ## Non-goals
 
@@ -38,7 +38,7 @@ analysis. Summary:
 
 - [x] T1 — Dedupe: one owner per rule; others reference by name.
 - [x] T2 — Rewrite every `description:` as `Trigger: <when>` (<= 20 words).
-- [x] T3 — Version the proposal at `docs/skills-redesign-proposal.md`.
+- [x] T3 — Version the proposal at `docs/proposals/skills-redesign.md`.
 - [x] T4 — Delete `skill-stack/`; fix the README/README_ES claim.
 - [x] T5 — Test: 12 dirs, each SKILL.md, total lines <= budget, rule-e clean.
 - [x] T6 — Gates: pytest, ruff, format, `pack --check` 6/6, line count.
