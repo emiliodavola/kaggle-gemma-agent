@@ -19,3 +19,31 @@ jobs:
       - run: uv run coverage run -m pytest tests/ -q
       - run: uv run coverage report -m
       - run: uv run python -m kaggle_gemma_agent.pack submission --check
+
+  journal:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Fetch base ref
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags origin "$BASE_REF"
+      - name: Check change journal
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          uv run python scripts/check_journal_entry.py \
+            --base "origin/$BASE_REF" \
+            --head HEAD \
+            --pr-title "$PR_TITLE" \
+            --pr-body-file "$RUNNER_TEMP/pr-body.md"

@@ -26,7 +26,7 @@ on purpose for outreach. Nothing else in the repository is exempt.
 `docs/README.md` is the single entry point and the document index. It is
 updated in the same PR that adds or moves any document.
 
-Every document belongs to one of four genres:
+Every document belongs to one of five genres:
 
 - **living reference** — stable name, no date in the name, updated in place
   (`docs/`). Status `current`.
@@ -36,6 +36,9 @@ Every document belongs to one of four genres:
 - **task digest** — regenerable from `data/raw/tasks.jsonl` (`docs/tasks/`);
   regenerate instead of hand-editing.
 - **proposal** — dated, superseded but never deleted (`docs/proposals/`).
+- **journal** — append-only change log; one human file per UTC day
+  (`docs/journal/YYYYMMDD.md`) rendered from the machine file
+  `docs/journal/events.jsonl`. See `## Change journal` below.
 
 Every document starts with a six-field header block (`Date`, `Genre`, `Status`,
 `Scope`, `Source of truth`, `Limits`); fill the values from the document itself.
@@ -49,6 +52,37 @@ evidence.
 (title, 2-3 lines, path, run, status, PR) and never the content, and never a
 volatile number without an "as of <date>" stamp.
 
+## Change journal
+
+`docs/journal/` is the chronological, cross-cutting log of changes and
+decisions. It is **not** the per-feature tracker (`odd/tasks/`), not the
+documentation index (`docs/README.md`), not `engram` and not `git log`.
+
+- Machine layer `docs/journal/events.jsonl` is append-only: one JSON object per
+  line, UTF-8, LF terminated, and the source of truth.
+- Human layer `docs/journal/YYYYMMDD.md` is rendered from `events.jsonl` for
+  that UTC day; regenerate it, never hand-edit it.
+
+The journal is **append-only**: an entry is never edited and never deleted. To
+revise one, add a new entry that supersedes or reverts it and set the old
+entry's status to `superseded` or `reverted`.
+
+Evidence is counts and paths, never causality. Without randomisation a batch
+comparison is written `"29/48 -> X/48 on a different batch"`, never
+`"it improved"`.
+
+Any PR that touches `submission/`, `docs/`, `scripts/host-trial/` or
+`src/kaggle_gemma_agent/harness_runs.py` adds its journal entry in the same PR.
+The CI job `journal` enforces this with `scripts/check_journal_entry.py`.
+
+The token `[no-journal]` in the PR title or body is an escape hatch that must be
+justified in the PR body. It is only legitimate for mechanical changes with no
+decision and no new evidence: a plain revert, a typo or link fix, or a bot
+commit. It is never legitimate for a change that alters agent behaviour,
+submission content, prompts, skills or harness runs.
+
+Format, schema and CLI: `docs/journal/README.md`.
+
 ## Layout
 
 ```
@@ -59,7 +93,8 @@ volatile number without an "as of <date>" stamp.
 │   ├── README.md                 # single entry point and document index
 │   ├── runs/<run-id>/            # append-only run analyses
 │   ├── tasks/                    # task digests (regenerable from tasks.jsonl)
-│   └── proposals/                # dated proposals (superseded, never deleted)
+│   ├── proposals/                # dated proposals (superseded, never deleted)
+│   └── journal/                  # append-only change log (events.jsonl + day files)
 ├── data/                         # local data (raw is git-ignored)
 ├── src/
 │   └── kaggle_gemma_4_developer_agent_competition/
