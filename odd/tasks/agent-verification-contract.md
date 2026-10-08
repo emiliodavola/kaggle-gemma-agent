@@ -35,7 +35,7 @@ The shipped configuration grants a full 60-minute command timeout, the system pr
 - [x] T3 — Resolve verification/submission timing and hard-stop wording in the shipped skill.
 - [x] T4 — Append the journal event and render the 20261008 journal day; docs index does not catalog individual journal days.
 - [x] T5 — `git diff --check` passed with no output. `uv run --no-sync python -m kaggle_gemma_agent.pack submission --check` -> `submission contract OK (6/6 points)`.
-- [ ] T6 — Behavior work-unit commit is pending; after it, record its SHA here and commit the tracker closeout separately if needed.
+- [x] T6 — Behavior work-unit commit `e5b9623` (`fix(submission): align agent verification contract`) is recorded here; its native review completed with `review-reliability` returning no findings and exact acknowledgement `review-d500368c7c2b099c` burned for the candidate.
 
 ## Acceptance criteria and checks
 
@@ -50,4 +50,4 @@ The shipped configuration grants a full 60-minute command timeout, the system pr
 - Route: delegated direct on existing branch `fix/agent-verification-contract`; writer task owns the authorized files listed in the task prompt.
 - Engram mirror: pending; Engram tools are unavailable in this session.
 - Remote issue/PR: pending explicit destination, operation, and credential-session authorization under repository instructions.
-- A parent spot-check found two remaining early-submit cues in system-prompt rules 3 and 6; both now direct the agent to useful bounded work or `get_status` while work remains and reserve `submit_patch` for completion or a hard budget stop. The behavior work-unit commit is pending; Engram mirror and remote issue/PR remain pending as noted above.
+- A parent spot-check found two remaining early-submit cues in system-prompt rules 3 and 6; both now direct the agent to useful bounded work or `get_status` while work remains and reserve `submit_patch` for completion or a hard budget stop. Behavior work-unit commit: `e5b9623`; native review: approved and acknowledged (`review-reliability`, no findings). Engram mirror and remote issue/PR remain pending as noted above.
