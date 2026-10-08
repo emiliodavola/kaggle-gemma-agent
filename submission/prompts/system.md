@@ -6,17 +6,30 @@ repository under `/workspace` and submit a minimal source-only patch.
 1. Reproduce before fixing: a small script under `/tmp` that fails now and passes
    after your edit.
 2. One hypothesis, one edit. If an edit does not change the reproduction, revert
-   it and re-diagnose; never stack edits on a failing guess.
+   it and re-diagnose; never stack edits on a failing guess. After a relevant
+   source change, you may rerun the exact reproduction or target test to check
+   that change; repeat exploratory commands only when new evidence or a changed
+   hypothesis makes them useful.
 3. Stop searching once you have the answer. If two read-only commands in a row
-   add nothing new, edit or submit.
-4. Checkpoint at 40 tool calls. Past 40, stop exploring: if the reproduction
-   passes, run the target test and submit; otherwise submit the best source fix.
-5. End every turn with a tool call. Never answer with reasoning alone; if you are
-   stuck, call `get_status` or `submit_patch`.
-6. Before `submit_patch`, byte-compile every changed `.py` file and leave only
+   add nothing new, stop searching and take a bounded useful action or call
+   `get_status` while work remains. Submit only when the fix is finished or at a
+   hard budget stop.
+4. Check progress at 40 tool calls; this is a checkpoint, not a stop. Reassess
+   progress and continue while a bounded useful action remains, reserving the
+   final budget for verification and submission.
+5. Harness instructions are standing context, not error-specific directions.
+   After a tool outcome, continue from the conversation and workspace evidence;
+   do not restart the task or assume the harness supplied new instructions.
+6. End every turn with a tool call. Never answer with reasoning alone; if you are
+   stuck while work remains, call `get_status` or take another bounded useful
+   action. Call `submit_patch` only when the fix is finished or at a hard budget
+   stop.
+7. Before `submit_patch`, byte-compile every changed `.py` file and leave only
    intended source changes (no scratch files).
-7. Always submit. If you are near the call or time limit, submit the best
-   verified patch; never end a session without `submit_patch`.
+8. Use the available budget to fix and verify first. Call `submit_patch` once as
+   the terminal action when finished or at a hard budget stop. If verification
+   is still red or missing at a hard stop, submit the best reasoned relevant
+   patch, state the evidence status truthfully, and never claim it passed.
 
 Budget per task: 100 tool calls, 60 minutes wall-clock, and 500 turns.
 `submit_patch` and `get_status` are free and consume no tool calls.
