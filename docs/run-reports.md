@@ -43,6 +43,29 @@ runs/
 `STATUS` always finds a complete report. The UTC stamp is
 `datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")` unless `--timestamp` overrides it.
 
+### `manifest.json`
+
+`manifest.json` records the archiver inputs: `schema_version`, `created_at`,
+`source_results_dir`, `junit_dir`, `task_count`, the per-task `tasks` list with
+artifact sizes, `sandbox_deps_mode`, and a `provenance` block.
+
+`provenance` carries the submission hashes of the moment the run was archived
+(`harness_runs.provenance_hashes`):
+
+| Key | Meaning |
+| :--- | :--- |
+| `prompt` | `sha256` of `submission/prompts/system.md`. |
+| `sampling` | `sha256` of `submission/configs/sampling.yaml`. |
+| `eval_config` | `sha256` of `submission/eval_config.yaml`. |
+| `repo_commit` | HEAD sha, suffixed `-dirty` when the worktree is dirty. |
+
+Any key is `null` when its input is missing. Re-archiving an old run hashes the
+**current** submission, not the one that run used, so a re-archive of an old run
+would attach hashes that do not describe it. This mirrors the same caveat the
+journal documents (`docs/journal/README.md`, "Run provenance and re-reporting"):
+the authoritative hashes are the ones captured before the agent started, and an
+old run should not be re-archived to manufacture provenance.
+
 ## 2. `report.json` (schema `1.0`)
 
 Top-level keys:
@@ -91,6 +114,7 @@ Top-level keys:
 | `failure_tail` | `object \| null` | `{source, chars, truncated, text}` for non-passing tasks. |
 | `failure_kind` | `str \| null` | Coarse cause from `test_output.log`: `collection_error` / `test_failure` / `timeout` / `unknown`; `null` when the task passed or has no test log. |
 | `missing_modules` | `list[str]` | Sorted unique `No module named '...'` modules from the `test_output.log` tail; empty for a passing task or one without a test log. |
+| `import_errors` | `list[str]` | Sorted short strings for import/collection resolution failures from the `test_output.log` tail: `cannot import name 'X' from 'Y'` and `module 'Y' has no attribute 'X'`; empty for a passing task or one without a test log. Triage: the failure may be environmental (a missing or older dependency) or agent-caused, so it is a surfaced signal, **not** an `infra_error` verdict. |
 
 `fail_to_pass` / `pass_to_pass` are always present when `junit.xml` exists.
 Expected nodes come from (in order): the result line's `FAIL_TO_PASS` /

@@ -639,6 +639,66 @@ def test_build_report_flags_distinct_missing_modules(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# import errors (import/collection resolution failures)
+# --------------------------------------------------------------------------- #
+HTTPX_ATTRIBUTE_ERROR_LOG = (
+    "STDOUT:\n"
+    "\n"
+    "==================================== ERRORS ====================================\n"
+    "____________________ ERROR collecting tests/test_parsers.py ____________________\n"
+    "tests/test_parsers.py:5: in <module>\n"
+    "    class TrickleIO(httpx.Stream):\n"
+    "                    ^^^^^^^^^^^^\n"
+    "E   AttributeError: module 'httpx' has no attribute 'Stream'. "
+    "Did you mean: 'stream'?\n"
+    "=========================== short test summary info ============================\n"
+    "ERROR tests/test_parsers.py - AttributeError: module 'httpx' has no attribute...\n"
+    "!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n"
+    "1 error in 0.23s\n"
+    "\n"
+    "STDERR:\n"
+)
+
+
+def test_build_report_surfaces_httpx_attribute_error(tmp_path: Path) -> None:
+    run_dir = _make_evidence_run(tmp_path)
+    task_dir = run_dir / "httpx_3672"
+    task_dir.mkdir()
+    (task_dir / "test_output.log").write_text(HTTPX_ATTRIBUTE_ERROR_LOG, encoding="utf-8")
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    task = report["tasks"][0]
+
+    assert task["status"] == "fail"
+    assert task["failure_kind"] == "collection_error"
+    assert task["import_errors"] == ["module 'httpx' has no attribute 'Stream'"]
+    # An import/attribute error can be agent-caused: it is surfaced, not reclassified.
+    assert task["infra_error"] is False
+
+
+def test_build_report_surfaces_cannot_import_name(tmp_path: Path) -> None:
+    run_dir = _make_evidence_run(tmp_path)
+    task_dir = run_dir / "c__3"
+    task_dir.mkdir()
+    (task_dir / "test_output.log").write_text(
+        "ERROR collecting tests/test_x.py\n"
+        "E   ImportError: cannot import name 'Stream' from 'httpx'\n"
+        "!!!! Interrupted: 1 error during collection !!!!\n",
+        encoding="utf-8",
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+    task = report["tasks"][0]
+
+    assert task["import_errors"] == ["cannot import name 'Stream' from 'httpx'"]
+
+
+def test_import_errors_empty_for_passing_task_and_missing_log(tmp_path: Path) -> None:
+    assert run_report._import_errors(tmp_path / "nope", "pass") == []
+    assert run_report._import_errors(tmp_path / "nope", "fail") == []
+
+
+# --------------------------------------------------------------------------- #
 # verdict inference (issue #46)
 # --------------------------------------------------------------------------- #
 def _make_evidence_run(root: Path) -> Path:

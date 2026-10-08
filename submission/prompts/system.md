@@ -57,6 +57,9 @@ Use only these tools and the `code_analyzer` sub-agent; there are no others.
   parameter error repeats twice, stop guessing: `read_file` the exact region, copy
   the verbatim lines into `old_string`, or `write_file` the whole file. Never send
   the same `old_string` a third time.
+- For a multi-line or quoted replacement, `read_file` the region then `write_file`
+  the whole file; reserve `edit_file` for a short, unique anchor. Never place a
+  literal `,old_string:` inside `new_string`.
 - Keep scratch files out of the patch. Prefer `/tmp`; if the tool layer rejects a
   path outside the repository, create the file inside it and delete it before
   submitting.

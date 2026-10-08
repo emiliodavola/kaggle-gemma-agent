@@ -142,6 +142,7 @@ def archive_run(
     budgets: Mapping[str, int] | None = None,
     index_path: Path | None = None,
     sandbox_deps_mode: str | None = None,
+    repo_root: Path | None = None,
 ) -> Path:
     """Archive a ``swegemma --results-dir`` under ``runs_root/<timestamp>/``.
 
@@ -197,6 +198,7 @@ def archive_run(
         "task_count": len(tasks),
         "tasks": tasks,
         "sandbox_deps_mode": sandbox_deps_mode,
+        "provenance": provenance_hashes(repo_root),
     }
     (run_dir / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 

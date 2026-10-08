@@ -88,6 +88,22 @@ def test_archive_run_records_absent_sandbox_deps_mode_as_none(tmp_path: Path) ->
     assert manifest["sandbox_deps_mode"] is None
 
 
+def test_archive_run_records_provenance_in_manifest(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+
+    run_dir = harness_runs.archive_run(
+        results,
+        runs_root=tmp_path / "runs",
+        timestamp="prov",
+        finalize=False,
+        repo_root=tmp_path,
+    )
+
+    manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
+    assert set(manifest["provenance"]) == {"prompt", "sampling", "eval_config", "repo_commit"}
+    assert all(value is None for value in manifest["provenance"].values())
+
+
 def test_archive_run_folds_in_junit_xml(tmp_path: Path) -> None:
     results = _make_results(tmp_path)
     junit = tmp_path / "junit"
