@@ -1,7 +1,7 @@
 ---
 Date: 2026-10-06
 Genre: run analysis
-Status: current
+Status: superseded-by docs/runs/20261006T103737Z/09-corrections.md
 Scope: Catalogue, frequencies and fail-vs-pass comparison of the messages the harness delivers to the agent in run_03; it excludes model responses and thinking.
 Source of truth: runs/20261006T103737Z/ (48 rich_* ATIF-v1.7 traces) and results/run_03/; read 2026-10-06.
 Limits: message counts only; no causal attribution to the resolution outcome.

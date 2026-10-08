@@ -1,7 +1,7 @@
 ---
 Date: 2026-10-06
 Genre: run analysis
-Status: current
+Status: superseded-by docs/runs/20261006T103737Z/09-corrections.md
 Scope: Descriptive failure analysis by system-prompt version (v2/v3a/v3) across run_03; it is not a formal A/B test.
 Source of truth: runs/20261006T103737Z/report.json, task_results.jsonl and rich_*/trace.json, results/run_03/task_results.jsonl, submission prompts/configs; read 2026-10-06.
 Limits: prompt version, time and task difficulty are confounded; no randomisation and no task repeated across versions.

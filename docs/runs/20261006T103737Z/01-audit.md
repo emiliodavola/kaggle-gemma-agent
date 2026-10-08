@@ -1,7 +1,7 @@
 ---
 Date: 2026-10-06
 Genre: run analysis
-Status: current
+Status: superseded-by docs/runs/20261006T103737Z/09-corrections.md
 Scope: Full audit of run_03 (48 rich_* tasks): resolution, failure kinds, prompt provenance, patch hygiene and recommendations; it does not cover the fastapi/requests/httpx segments.
 Source of truth: runs/20261006T103737Z/ and results/run_03/; read 2026-10-06.
 Limits: single-repo census (100% rich_*); descriptive counts, no statistical inference.
