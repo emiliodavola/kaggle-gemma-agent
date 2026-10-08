@@ -49,5 +49,5 @@ The shipped configuration grants a full 60-minute command timeout, the system pr
 
 - Route: delegated direct on existing branch `fix/agent-verification-contract`; writer task owns the authorized files listed in the task prompt.
 - Engram mirror: pending; Engram tools are unavailable in this session.
-- Remote issue/PR: pending explicit destination, operation, and credential-session authorization under repository instructions.
+- Remote issue: confirmed as [#86](https://github.com/emiliodavola/kaggle-gemma-agent/issues/86), open and assigned to `emiliodavola`; target-host read-back matched the title and body. Branch `fix/agent-verification-contract` is published to `origin`. PR remains blocked because the repository currently has neither `status:approved` nor any `type:*` label, and this workflow cannot create labels.
 - A parent spot-check found two remaining early-submit cues in system-prompt rules 3 and 6; both now direct the agent to useful bounded work or `get_status` while work remains and reserve `submit_patch` for completion or a hard budget stop. Behavior work-unit commit: `e5b9623`; native review: approved and acknowledged (`review-reliability`, no findings). Engram mirror and remote issue/PR remain pending as noted above.
