@@ -21,6 +21,13 @@ Validation performed before writing the archive:
 * no file named ``agent.py`` is included;
 * the total unpacked size stays strictly below the 3 GiB adapter budget.
 
+``check_submission`` validates the 6-point competition contract (rules a-f).
+``check_harness_surface`` validates the harness surface next to it (rules s1-s3):
+every shipped skill is named in the always-on prompt, that prompt stays under
+:data:`MAX_ALWAYS_ON_CHARS`, and every ``scripts/<file>.py`` a skill references
+is actually shipped. The two layers are independent: the contract keeps its
+``6/6`` meaning and its messages.
+
 ``agent.yaml`` is read from the source root when present, so the shipped
 manifest lives under ``submission/`` instead of being hard-coded here.
 """
@@ -34,12 +41,21 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from .prompt_variant import PromptVariantError, apply_variant, has_selector
+from .prompt_variant import (
+    SELECTOR,
+    PromptVariantError,
+    active_prompt_path,
+    apply_variant,
+    has_selector,
+    read_variant,
+    variant_path,
+)
 
 MAX_UNPACKED_BYTES = 3 * 1024**3
 AGENT_MANIFEST = "agent.yaml"
 EVAL_CONFIG = "eval_config.yaml"
 STACK_DIR = "skills"
+SCRIPTS_DIR = "scripts"
 SKILL_MANIFEST = "SKILL.md"
 FORBIDDEN_NAMES = frozenset({"agent.py"})
 
@@ -59,6 +75,20 @@ MODEL_LINE = re.compile(r"^\s*model:\s*(\S+)")
 BUDGET_LINE = re.compile(
     r"^\s*(max_tool_calls|max_time_minutes|max_turns|timeout_seconds):\s*(\d+)"
 )
+
+# Harness-surface layer (rules s1-s3), complementary to the 6-point contract.
+#
+# Per-turn prefix budget. The active prompt is 5 364 chars today; this cap is
+# 4.4x that, which keeps the always-on prefix near 6 000 tokens at the common
+# 4-chars-per-token heuristic. That prefix is paid on every turn of every task
+# (up to 500 turns), so an unbounded prompt is the most expensive regression
+# this gate can catch; the twelve skills already have a line budget in
+# tests/test_skills.py and this closes the same gap for the always-on text.
+MAX_ALWAYS_ON_CHARS = 24_000
+# A ``scripts/<file>.py`` path token, and only that: a bare ``scripts/`` prose
+# mention, an absolute scratch path such as ``/tmp/scripts/x.py``, a nested
+# ``foo/scripts/x.py``, or a module reference never matches.
+SCRIPT_REF = re.compile(r"(?<![\w./-])(?:\./)?scripts/([A-Za-z0-9_.-]+\.py)")
 
 # Fallback used only when the source tree ships no ``agent.yaml``; the shipped
 # manifest is ``submission/agent.yaml``.
@@ -285,6 +315,117 @@ def check_submission(
     return violations
 
 
+def _always_on_prompt(source_dir: Path, violations: list[str]) -> tuple[Path, str] | None:
+    """Return the resolved always-on prompt and its text, or ``None``.
+
+    The manifest injects ``prompts/system.md`` with a static ``!include``, so the
+    whole decoded file is the always-on text; nothing is stripped. When a
+    selector is present, the selected variant's own file wins. A selector that
+    cannot be resolved, or a missing selected file, appends one violation and
+    returns ``None`` so the caller skips rules s1 and s2.
+    """
+    if has_selector(source_dir):
+        try:
+            prompt_path = variant_path(source_dir, read_variant(source_dir))
+        except PromptVariantError as exc:
+            violations.append(f"{SELECTOR}: {exc} (rules s1/s2)")
+            return None
+    else:
+        prompt_path = active_prompt_path(source_dir)
+    if not prompt_path.is_file():
+        violations.append(
+            f"{prompt_path.relative_to(source_dir)}: selected always-on prompt"
+            " not found (rules s1/s2)"
+        )
+        return None
+    return prompt_path.relative_to(source_dir), _read_text(prompt_path)
+
+
+def _check_skill_naming(source_dir: Path, prompt: tuple[Path, str], violations: list[str]) -> None:
+    """Rule s1: every shipped skill is named in the always-on text."""
+    stack = source_dir / STACK_DIR
+    if not stack.is_dir():
+        return
+    prompt_rel, text = prompt
+    for skill_dir in sorted(path for path in stack.iterdir() if path.is_dir()):
+        if not (skill_dir / SKILL_MANIFEST).is_file():
+            continue
+        if skill_dir.name not in text:
+            violation_file = Path(STACK_DIR, skill_dir.name, SKILL_MANIFEST)
+            violations.append(
+                f"{violation_file}: skill '{skill_dir.name}' is not named in {prompt_rel} (rule s1)"
+            )
+
+
+def _check_always_on_size(prompt: tuple[Path, str], violations: list[str]) -> None:
+    """Rule s2: the always-on text stays within the per-turn character budget."""
+    prompt_rel, text = prompt
+    if len(text) > MAX_ALWAYS_ON_CHARS:
+        violations.append(
+            f"{prompt_rel}: always-on prompt is {len(text)} chars, exceeds "
+            f"{MAX_ALWAYS_ON_CHARS} (rule s2)"
+        )
+
+
+def _missing_scripts(source_dir: Path, text: str) -> list[str]:
+    """Return the referenced script basenames absent from ``scripts/``, in order."""
+    missing: list[str] = []
+    seen: set[str] = set()
+    for match in SCRIPT_REF.finditer(text):
+        name = match.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        if not (source_dir / SCRIPTS_DIR / name).is_file():
+            missing.append(name)
+    return missing
+
+
+def _check_script_refs(
+    source_dir: Path, prompt: tuple[Path, str] | None, violations: list[str]
+) -> None:
+    """Rule s3: every referenced ``scripts/<file>.py`` ships in the archive."""
+    sources: list[tuple[Path, str]] = []
+    if prompt is not None:
+        sources.append(prompt)
+    stack = source_dir / STACK_DIR
+    if stack.is_dir():
+        for skill_dir in sorted(path for path in stack.iterdir() if path.is_dir()):
+            manifest = skill_dir / SKILL_MANIFEST
+            if manifest.is_file():
+                sources.append((manifest.relative_to(source_dir), _read_text(manifest)))
+    for rel, text in sources:
+        for name in _missing_scripts(source_dir, text):
+            violations.append(f"{rel}: references missing script '{SCRIPTS_DIR}/{name}' (rule s3)")
+
+
+def check_harness_surface(source_dir: Path) -> list[str]:
+    """Validate the harness surface (rules s1-s3) and return every violation.
+
+    An empty list means the surface is compliant. Rules, in emission order:
+
+    * s1: every ``skills/<name>/SKILL.md`` has ``<name>`` in the always-on text;
+    * s2: that text is at most :data:`MAX_ALWAYS_ON_CHARS` characters;
+    * s3: every ``scripts/<file>.py`` referenced by a skill body or the always-on
+      text exists at ``scripts/<file>.py`` in the source tree.
+
+    The always-on text is the file selected by ``configs/prompt_variant.yaml``
+    (``prompts/system.md`` when no selector is present). This function is
+    read-only: it never materializes the variant, never writes, and never
+    compares ``prompts/system.md`` against the selection.
+    """
+    source_dir = Path(source_dir)
+    if not source_dir.is_dir():
+        return [f"{source_dir}: source directory does not exist (harness surface)"]
+    violations: list[str] = []
+    prompt = _always_on_prompt(source_dir, violations)
+    if prompt is not None:
+        _check_skill_naming(source_dir, prompt, violations)
+        _check_always_on_size(prompt, violations)
+    _check_script_refs(source_dir, prompt, violations)
+    return violations
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry point for the submission packer."""
     parser = argparse.ArgumentParser(
@@ -296,22 +437,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate the 6-point submission contract instead of writing an archive",
+        help="validate the 6-point contract and the harness surface instead of writing an archive",
     )
     args = parser.parse_args(argv)
 
     if args.check:
-        violations = check_submission(args.source)
-        if violations:
-            for violation in violations:
-                print(f"error: {violation}", file=sys.stderr)
+        contract = check_submission(args.source)
+        surface = check_harness_surface(args.source)
+        for violation in contract:
+            print(f"error: {violation}", file=sys.stderr)
+        if contract:
             print(
-                f"submission contract FAILED ({len(violations)} violation(s))",
+                f"submission contract FAILED ({len(contract)} violation(s))",
                 file=sys.stderr,
             )
-            return 1
-        print("submission contract OK (6/6 points)")
-        return 0
+        else:
+            print("submission contract OK (6/6 points)")
+        for violation in surface:
+            print(f"error: {violation}", file=sys.stderr)
+        if surface:
+            print(
+                f"harness surface FAILED ({len(surface)} violation(s))",
+                file=sys.stderr,
+            )
+        else:
+            print("harness surface OK (3 checks)")
+        return 1 if contract or surface else 0
 
     try:
         archive = build_submission(args.source, args.output)

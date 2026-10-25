@@ -85,6 +85,12 @@ limits in `eval_config.yaml` (**d**, 100 calls / 60 min / 500 turns); no
 network / pip / MCP / subprocess strings under `submission/` (**e**); and an
 archive below **3 GiB** (**f**).
 
+A second, independent layer validates the harness surface: every skill is named
+in the always-on prompt (**s1**), that prompt stays under `MAX_ALWAYS_ON_CHARS`
+(**s2**), and every referenced `scripts/<file>.py` ships in the archive
+(**s3**). It prints `harness surface OK (3 checks)` next to the unchanged
+`6/6` line, and `--check` fails if either layer fails.
+
 ## Submission overview
 
 `submission.zip` contains:

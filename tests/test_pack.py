@@ -74,10 +74,17 @@ def test_nonexistent_source_raises(tmp_path: Path) -> None:
 
 
 def _make_compliant_source(root: Path) -> Path:
+    names: list[str] = []
     for index in range(pack.REQUIRED_SKILLS):
-        skill_dir = root / pack.STACK_DIR / f"skill-{index:02d}"
+        name = f"skill-{index:02d}"
+        skill_dir = root / pack.STACK_DIR / name
         skill_dir.mkdir(parents=True)
         (skill_dir / pack.SKILL_MANIFEST).write_text("# Skill\n", encoding="utf-8")
+        names.append(name)
+    (root / "prompts").mkdir()
+    (root / "prompts" / "system.md").write_text(
+        "\n".join(f"- {name}" for name in names) + "\n", encoding="utf-8"
+    )
     (root / pack.AGENT_MANIFEST).write_text(
         f"name: demo\nmodel: {pack.EXPECTED_MODEL}\n", encoding="utf-8"
     )
@@ -89,6 +96,15 @@ def _make_compliant_source(root: Path) -> Path:
         encoding="utf-8",
     )
     return root
+
+
+def _skill_names(source: Path) -> list[str]:
+    return sorted(path.name for path in (source / pack.STACK_DIR).iterdir() if path.is_dir())
+
+
+def _write_always_on(source: Path, text: str) -> None:
+    (source / "prompts").mkdir(exist_ok=True)
+    (source / "prompts" / "system.md").write_text(text, encoding="utf-8")
 
 
 def test_check_submission_passes_on_compliant_source(tmp_path: Path) -> None:
@@ -129,7 +145,7 @@ def test_check_flags_budget_over_limit(tmp_path: Path) -> None:
 
 def test_check_flags_forbidden_string(tmp_path: Path) -> None:
     source = _make_compliant_source(tmp_path)
-    (source / "prompts").mkdir()
+    (source / "prompts").mkdir(exist_ok=True)
     (source / "prompts" / "system.md").write_text(
         "Do not run pip install anything.\n", encoding="utf-8"
     )
@@ -249,3 +265,148 @@ def test_main_build_error_returns_one(tmp_path: Path, capsys: pytest.CaptureFixt
     assert pack.main([str(tmp_path / "nope"), "-o", str(output)]) == 1
     assert not output.exists()
     assert "error:" in capsys.readouterr().err
+
+
+def test_check_harness_surface_passes_on_compliant_source(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    assert pack.check_harness_surface(source) == []
+
+
+def test_harness_surface_flags_untriggered_skill(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    names = [name for name in _skill_names(source) if name != "skill-03"]
+    _write_always_on(source, "\n".join(f"- {name}" for name in names) + "\n")
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == 1
+    assert "skill-03" in violations[0]
+    assert "rule s1" in violations[0]
+
+
+def test_harness_surface_flags_oversized_prompt(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    text = "\n".join(_skill_names(source)) + "x" * (pack.MAX_ALWAYS_ON_CHARS + 1)
+    _write_always_on(source, text)
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == 1
+    assert "rule s2" in violations[0]
+    assert str(pack.MAX_ALWAYS_ON_CHARS) in violations[0]
+
+
+def test_harness_surface_flags_missing_script_reference(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    manifest = source / pack.STACK_DIR / "skill-00" / pack.SKILL_MANIFEST
+    manifest.write_text("# Skill\nRun `python3 scripts/missing.py`.\n", encoding="utf-8")
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == 1
+    assert "scripts/missing.py" in violations[0]
+    assert "rule s3" in violations[0]
+
+    (source / pack.SCRIPTS_DIR).mkdir()
+    (source / pack.SCRIPTS_DIR / "missing.py").write_text("", encoding="utf-8")
+
+    assert pack.check_harness_surface(source) == []
+
+
+def test_harness_surface_follows_selected_variant(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    names = _skill_names(source)
+    (source / "configs").mkdir()
+    (source / "configs" / "prompt_variant.yaml").write_text("variant: v2\n", encoding="utf-8")
+    (source / "prompts" / "system.v2.md").write_text("\n".join(names), encoding="utf-8")
+    _write_always_on(source, "no skill is named here\n")
+
+    assert pack.check_harness_surface(source) == []
+
+    (source / "prompts" / "system.v2.md").write_text("no skill is named here\n", encoding="utf-8")
+    _write_always_on(source, "\n".join(names))
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == len(names)
+    assert all("rule s1" in v for v in violations)
+
+
+def test_harness_surface_ignores_prose_script_mentions(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    text = (
+        "\n".join(_skill_names(source))
+        + "\nKeep scratch under the scripts/ directory, never at /tmp/scripts/x.py"
+        " or foo/scripts/x.py.\n"
+        "Byte-compile every changed `.py` file; see `conftest.py`."
+        " Use python3 - <<'PY' for scratch.\n"
+    )
+    _write_always_on(source, text)
+
+    assert pack.check_harness_surface(source) == []
+
+
+def test_harness_surface_reports_unresolvable_selector(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "configs").mkdir()
+    (source / "configs" / "prompt_variant.yaml").write_text("variant: nope\n", encoding="utf-8")
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == 1
+    assert "unknown variant" in violations[0]
+    assert "rules s1/s2" in violations[0]
+
+
+def test_harness_surface_reports_missing_prompt(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "prompts" / "system.md").unlink()
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == 1
+    assert "selected always-on prompt not found" in violations[0]
+    assert "rules s1/s2" in violations[0]
+
+
+def test_main_check_prints_harness_surface_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    assert pack.main([str(source), "--check"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "submission contract OK (6/6 points)",
+        "harness surface OK (3 checks)",
+    ]
+
+
+def test_main_check_reports_harness_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = _make_compliant_source(tmp_path)
+    names = [name for name in _skill_names(source) if name != "skill-07"]
+    _write_always_on(source, "\n".join(f"- {name}" for name in names) + "\n")
+
+    assert pack.main([str(source), "--check"]) == 1
+    captured = capsys.readouterr()
+    assert "harness surface FAILED" in captured.err
+    assert "submission contract OK (6/6 points)" in captured.out
+
+
+def test_harness_surface_size_counts_decoded_chars(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    names_text = "\n".join(_skill_names(source)) + "\n"
+    exact = names_text + "x" * (pack.MAX_ALWAYS_ON_CHARS - len(names_text))
+    _write_always_on(source, exact)
+
+    assert len(exact) == pack.MAX_ALWAYS_ON_CHARS
+    assert pack.check_harness_surface(source) == []
+
+    _write_always_on(source, exact + "x")
+
+    violations = pack.check_harness_surface(source)
+
+    assert len(violations) == 1
+    assert "rule s2" in violations[0]

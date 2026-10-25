@@ -159,6 +159,13 @@ It enforces the 6 points from PR #9 (`check_submission` in
 - **e** — no network / pip / MCP / subprocess strings under `submission/`.
 - **f** — packed archive stays **< 3 GiB**.
 
+Next to the contract, `check_harness_surface` validates the harness surface and
+is reported as a second, independent line: every shipped skill is named in the
+always-on prompt (**s1**), that prompt stays under `MAX_ALWAYS_ON_CHARS`
+(**s2**), and every `scripts/<file>.py` a skill references ships in the archive
+(**s3**). The layer prints `harness surface OK (3 checks)` and never renumbers
+or changes the contract points; `--check` exits non-zero if either layer fails.
+
 CI runs it in `.github/workflows/ci.yml`; fix the reported file before pushing.
 
 ## Harness budgets
