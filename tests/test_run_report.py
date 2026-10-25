@@ -360,6 +360,213 @@ def test_build_report_uses_tasks_metadata_test_sets(tmp_path: Path) -> None:
     assert task_a["pass_to_pass"]["passed"] == ["test_a"]
 
 
+def test_build_report_delivery_record_and_totals(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "20260102T000000Z"
+    run_dir.mkdir(parents=True)
+
+    def _task(name: str, patch: str | None, trace: object | None) -> Path:
+        task_dir = run_dir / name
+        task_dir.mkdir()
+        if patch is not None:
+            (task_dir / "agent_patch.diff").write_text(patch, encoding="utf-8")
+        if trace is not None:
+            (task_dir / "trace.json").write_text(json.dumps(trace), encoding="utf-8")
+        return task_dir
+
+    def _trace(*commands: str) -> dict[str, Any]:
+        calls: list[dict[str, Any]] = [
+            {"function_name": "run_command", "arguments": {"command": command}}
+            for command in commands
+        ]
+        calls.append({"function_name": "submit_patch", "arguments": {}})
+        return {"steps": [{"tool_calls": calls}]}
+
+    def _patch(*paths: str) -> str:
+        return "".join(f"diff --git a/{path} b/{path}\n" for path in paths)
+
+    _task("t_src_only", _patch("src/pkg/mod.py"), _trace("pytest tests/test_mod.py"))
+    _task("t_edits_tests", _patch("src/x.py", "tests/test_x.py"), None)
+    _task("t_config_only", _patch("tox.ini"), _trace("python -m pytest tests/test_x.py"))
+    _task("t_scratch", _patch("repro.py", "src/x.py"), {"steps": []})
+    _task("t_none", None, None)
+    corrupted = (
+        'diff --git "a/repro.py" "b/repro.py"\n'
+        "--- /dev/null\n"
+        '+++ "b/repro.py"\n'
+        "diff --git a/src/pkg/mod.py b/src/pkg/mod.py\n"
+    )
+    _task("t_corrupted", corrupted, _trace("pytest tests/test_mod.py"))
+    _task("t_missing_trace", _patch("src/pkg/mod.py"), None)
+
+    meta = {
+        "t_src_only": {"test_patch": "--- a/tests/test_mod.py\n+++ b/tests/test_mod.py\n"},
+        "t_edits_tests": {"test_patch": "+++ b/tests/test_x.py\n"},
+        "t_config_only": {"test_patch": "+++ b/tests/test_x.py\n"},
+        "t_scratch": {"test_patch": "+++ b/tests/test_x.py\n"},
+        "t_none": {},
+        "t_missing_trace": {"test_patch": "+++ b/tests/test_x.py\n"},
+    }
+
+    report = run_report.build_report(run_dir, tasks_meta=meta, environ={}, docker_version="test")
+    by_id = {task["instance_id"]: task for task in report["tasks"]}
+
+    expected: dict[str, tuple[list[str], str, bool, bool, bool | None]] = {
+        "t_src_only": (["src/pkg/mod.py"], "src_only", True, True, True),
+        "t_edits_tests": (["src/x.py", "tests/test_x.py"], "edits_tests", False, False, False),
+        "t_config_only": (["tox.ini"], "config_only", True, True, True),
+        "t_scratch": (["repro.py", "src/x.py"], "scratch", False, False, False),
+        "t_none": ([], "none", False, False, False),
+        "t_corrupted": (["src/pkg/mod.py"], "corrupted", True, True, None),
+        "t_missing_trace": (["src/pkg/mod.py"], "src_only", False, False, False),
+    }
+    for name, (files, scope, submitted, ran_pytest, ran_target) in expected.items():
+        delivery = by_id[name]["delivery"]
+        assert list(delivery) == [
+            "patch_files",
+            "patch_scope",
+            "submitted",
+            "ran_pytest",
+            "ran_target_test",
+        ]
+        assert delivery["patch_files"] == files
+        assert delivery["patch_scope"] == scope
+        assert delivery["submitted"] is submitted
+        assert delivery["ran_pytest"] is ran_pytest
+        assert delivery["ran_target_test"] is ran_target
+
+    assert report["totals"]["delivery"] == {
+        "submitted": 3,
+        "ran_pytest": 3,
+        "ran_target_test": 2,
+        "ran_target_test_unknown": 1,
+        "patch_scope": {
+            "src_only": 2,
+            "edits_tests": 1,
+            "config_only": 1,
+            "scratch": 1,
+            "none": 1,
+            "corrupted": 1,
+        },
+    }
+    assert list(report["totals"])[-1] == "delivery"
+    assert (
+        "delivery submitted 3/7 | scope src_only=2 edits_tests=1 config_only=1 "
+        "scratch=1 none=1 corrupted=1 | pytest 3 | target 2 | target-unknown 1"
+    ) in run_report.render_summary(report)
+
+    # Issue #88 Â§10 rows asserted directly on the private helpers.
+    assert run_report._patch_scope("   \n", [], False) == "none"
+    assert run_report._patch_paths("--- a\n+++ b\n+fixed\n") == ([], False)
+    assert run_report._patch_scope("--- a\n+++ b\n+fixed\n", [], False) == "corrupted"
+    assert run_report._patch_paths('diff --git "a/x y.py" "b/x y.py"\n') == ([], True)
+    assert run_report._patch_paths("diff --git a/old.py b/new.py\n") == (["new.py"], False)
+    assert run_report._patch_paths("diff --git a/x.py b/x.py\n") == (["x.py"], False)
+    assert run_report._patch_paths("diff --git a/x.py b/x.py\n") == (["x.py"], False)
+    bom = tmp_path / "bom"
+    bom.mkdir()
+    (bom / "agent_patch.diff").write_text(
+        "\ufeffdiff --git a/src/x.py b/src/x.py\n", encoding="utf-8"
+    )
+    assert run_report._patch_paths(run_report._patch_text(bom)) == (["src/x.py"], False)
+    assert run_report._patch_paths("diff --git a/src/x.py\tb/src/x.py\n") == (
+        ["src/x.py"],
+        False,
+    )
+    duplicated = "diff --git a/x.py b/x.py\r\ndiff --git a/x.py b/x.py\r\n"
+    assert run_report._patch_paths(duplicated) == (["x.py"], False)
+    assert run_report._patch_paths("diff --git a/x.py b//etc/passwd\n") == (
+        ["/etc/passwd"],
+        False,
+    )
+    assert run_report._patch_scope("x", ["docs/x.md"], False) == "scratch"
+    assert run_report._patch_scope("x", ["requirements-dev.txt"], False) == "config_only"
+    assert run_report._patch_scope("x", [".github/workflows/ci.yml"], False) == "config_only"
+    assert run_report._patch_scope("x", ["src/x.py", "repro.py"], False) == "scratch"
+
+    assert run_report._delivery_record(run_dir / "t_scratch", None)["ran_target_test"] is False
+    assert (
+        run_report._delivery_record(run_dir / "t_src_only", {"test_patch": ""})["ran_target_test"]
+        is False
+    )
+    assert (
+        run_report._delivery_record(run_dir / "t_src_only", {"test_patch": None})["ran_target_test"]
+        is None
+    )
+    assert (
+        run_report._delivery_record(
+            run_dir / "t_src_only", {"test_patch": ["+++ b/tests/test_mod.py"]}
+        )["ran_target_test"]
+        is None
+    )
+
+    # The pytest match is a textual mention detector, not a shell parser.
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    (probe / "trace.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "tool_calls": [
+                            {
+                                "function_name": "run_command",
+                                "arguments": {"command": "grep -n pytest requirements.txt"},
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert run_report._trace_facts(probe) == (False, ["grep -n pytest requirements.txt"])
+    mention = run_report._delivery_record(probe, {"test_patch": "+++ b/tests/test_x.py"})
+    assert mention["ran_pytest"] is True
+    assert mention["ran_target_test"] is False
+
+    (probe / "trace.json").write_text(json.dumps({"steps": {"x": 1}}), encoding="utf-8")
+    assert run_report._trace_facts(probe) == (False, [])
+    (probe / "trace.json").write_text(
+        json.dumps({"steps": [{"tool_calls": {"x": 1}}, "nope"]}), encoding="utf-8"
+    )
+    assert run_report._trace_facts(probe) == (False, [])
+    (probe / "trace.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "tool_calls": [
+                            {"function_name": "run_command", "arguments": "pytest x"},
+                            {"function_name": "run_command", "arguments": {"command": 7}},
+                            {"function_name": "submit_patch"},
+                            {"function_name": "submit_patch"},
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert run_report._trace_facts(probe) == (True, [])
+    (probe / "trace.json").write_text("not json", encoding="utf-8")
+    assert run_report._trace_facts(probe) is None
+
+    empty_run = tmp_path / "empty_run"
+    empty_run.mkdir()
+    empty_report = run_report.build_report(empty_run, environ={}, docker_version="test")
+    assert empty_report["totals"]["delivery"] == {
+        "submitted": 0,
+        "ran_pytest": 0,
+        "ran_target_test": 0,
+        "ran_target_test_unknown": 0,
+        "patch_scope": {scope: 0 for scope in run_report.PATCH_SCOPES},
+    }
+    assert (
+        "delivery submitted 0/0 | scope src_only=0 edits_tests=0 config_only=0 "
+        "scratch=0 none=0 corrupted=0 | pytest 0 | target 0"
+    ) in run_report.render_summary(empty_report)
+
+
 def test_build_report_summary_errors_make_partial(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path)
     (run_dir / "summary.json").write_text(
@@ -444,11 +651,27 @@ def test_render_summary_lines(tmp_path: Path) -> None:
     text = run_report.render_summary(report)
 
     lines = text.strip().splitlines()
-    assert len(lines) == 6
+    assert len(lines) == 7
     assert lines[0] == run_report.STATUS_DONE
     assert "rate 0.500" in text
     assert "tool_calls 12/200" in text
     assert "failures 1" in text
+    assert (
+        "delivery submitted 0/2 | scope src_only=0 edits_tests=0 config_only=0 "
+        "scratch=0 none=1 corrupted=1 | pytest 0 | target 0"
+    ) in text
+    assert "schema 1.0" in text
+
+
+def test_render_summary_omits_delivery_for_old_reports() -> None:
+    report = {
+        "status": run_report.STATUS_DONE,
+        "totals": {"tasks": 1, "resolved": 1, "unknown": 0},
+    }
+
+    text = run_report.render_summary(report)
+
+    assert "delivery " not in text
     assert "schema 1.0" in text
 
 
@@ -472,7 +695,7 @@ def test_build_report_surfaces_sandbox_deps_mode(tmp_path: Path) -> None:
     assert report["sandbox_deps_mode"] == "repaired"
     text = run_report.render_summary(report)
     assert "sandbox-deps repaired" in text
-    assert len(text.strip().splitlines()) == 6
+    assert len(text.strip().splitlines()) == 7
 
 
 def test_build_report_without_manifest_yields_no_sandbox_deps_mode(tmp_path: Path) -> None:
@@ -611,7 +834,7 @@ def test_build_report_flags_environment_blocked_for_a_shared_missing_module(
 
     text = run_report.render_summary(report)
     assert "env missing: typing_inspection" in text
-    assert len(text.strip().splitlines()) == 6
+    assert len(text.strip().splitlines()) == 7
 
 
 def test_build_report_flags_a_single_missing_module(tmp_path: Path) -> None:
@@ -768,7 +991,7 @@ def test_build_report_reports_measured_totals_and_reason(tmp_path: Path) -> None
 
     text = run_report.render_summary(report)
     assert "| measured 1/2" in text
-    assert len(text.strip().splitlines()) == 6
+    assert len(text.strip().splitlines()) == 7
 
 
 def test_build_report_infers_verdict_from_junit_without_record(tmp_path: Path) -> None:

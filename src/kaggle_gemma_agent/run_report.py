@@ -12,7 +12,7 @@ that a host operator and a poller (Hermes) agree on:
 
 ``runs/<UTC>/STATUS``
     One status token (``DONE`` / ``BLOCKED`` / ``PARTIAL``) followed by a
-    five-line human summary. This is the **polling signal**.
+    six-line human summary. This is the **polling signal**.
 
 ``runs/index.jsonl``
     Append-only, one JSON line per finished run, for cross-run comparison
@@ -80,6 +80,35 @@ REPORT_MAX_TASKS = 400
 INDEX_MAX_LINES = 1000
 #: Number of newest index lines retained after compaction.
 INDEX_KEEP_LINES = 500
+
+#: ``patch_scope`` values in the order used by ``totals.delivery`` and the STATUS line.
+PATCH_SCOPES: tuple[str, ...] = (
+    "src_only",
+    "edits_tests",
+    "config_only",
+    "scratch",
+    "none",
+    "corrupted",
+)
+
+#: Repository-level configuration files that make a patch ``config_only``.
+_CONFIG_FILES: frozenset[str] = frozenset(
+    {
+        "tox.ini",
+        "setup.py",
+        "setup.cfg",
+        "pyproject.toml",
+        "pytest.ini",
+        "noxfile.py",
+        "MANIFEST.in",
+        ".flake8",
+        ".gitignore",
+        ".gitattributes",
+        ".pre-commit-config.yaml",
+    }
+)
+
+_PYTEST_RE = re.compile(r"\bpytest\b")
 
 #: Per-task harness budgets (``AGENTS.md`` / ``HARNESS_README.md`` section 7.1).
 DEFAULT_BUDGETS: dict[str, int] = {"tool_calls": 100, "time_minutes": 60, "turns": 500}
@@ -646,6 +675,197 @@ def _import_errors(task_dir: Path, status: str) -> list[str]:
     return sorted(errors)
 
 
+# --------------------------------------------------------------------------- #
+# delivery record (issue #88)
+# --------------------------------------------------------------------------- #
+def _patch_text(task_dir: Path) -> str:
+    """Return the task's ``agent_patch.diff`` text, or ``""`` when unreadable.
+
+    Only the run's own artifact is read: a missing file, a directory, or an
+    ``OSError`` reads as absent. One leading UTF-8 BOM is removed so the first
+    header still parses.
+    """
+    path = task_dir / "agent_patch.diff"
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text.removeprefix("\ufeff")
+
+
+def _patch_paths(text: str) -> tuple[list[str], bool]:
+    """Return ``(post-image paths, malformed)`` parsed from a unified diff.
+
+    Paths are opaque POSIX-style strings: taken from ``diff --git a/… b/…``
+    headers, de-duplicated in first-appearance order. A header that does not
+    match that grammar contributes no path and marks the patch malformed.
+    """
+    files: list[str] = []
+    malformed = False
+    prefix = "diff --git "
+    for line in text.splitlines():
+        if not line.startswith(prefix):
+            continue
+        parts = line[len(prefix) :].split()
+        parsed = (
+            len(parts) == 2
+            and parts[0].startswith("a/")
+            and parts[1].startswith("b/")
+            and len(parts[0]) > 2
+            and len(parts[1]) > 2
+        )
+        if not parsed:
+            malformed = True
+            continue
+        path = parts[1][2:]
+        if path not in files:
+            files.append(path)
+    return files, malformed
+
+
+def _is_test_path(path: str) -> bool:
+    """Return whether *path* is a test path (``tests/``, ``test_*.py``, ``*_test.py``)."""
+    parts = path.split("/")
+    if parts[0] in ("tests", "test"):
+        return True
+    name = parts[-1]
+    return (name.startswith("test_") and name.endswith(".py")) or name.endswith("_test.py")
+
+
+def _is_config_path(path: str) -> bool:
+    """Return whether *path* is repository-level configuration."""
+    name = path.split("/")[-1]
+    return (
+        path.startswith(".github/")
+        or name in _CONFIG_FILES
+        or (name.startswith("requirements") and name.endswith(".txt"))
+    )
+
+
+def _is_src_path(path: str) -> bool:
+    """Return whether *path* lives under ``src/``."""
+    return path.startswith("src/")
+
+
+def _patch_scope(text: str, files: Sequence[str], malformed: bool) -> str:
+    """Classify a patch into exactly one :data:`PATCH_SCOPES` value, first match wins."""
+    if not text.strip():
+        return "none"
+    if malformed or not files:
+        return "corrupted"
+    if any(_is_test_path(path) for path in files):
+        return "edits_tests"
+    if any(
+        not _is_src_path(path) and not _is_test_path(path) and not _is_config_path(path)
+        for path in files
+    ):
+        return "scratch"
+    if all(_is_config_path(path) for path in files):
+        return "config_only"
+    return "src_only"
+
+
+def _trace_facts(task_dir: Path) -> tuple[bool, list[str]] | None:
+    """Return ``(submitted, pytest commands)``, or ``None`` when the trace is unavailable.
+
+    The pytest match is a documented textual mention detector, not a shell
+    parser: any command containing the word ``pytest`` counts.
+    """
+    trace = _load_json(task_dir / "trace.json")
+    if trace is None:
+        return None
+    submitted = False
+    commands: list[str] = []
+    steps = trace.get("steps")
+    if not isinstance(steps, list):
+        return submitted, commands
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        calls = step.get("tool_calls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            if call.get("function_name") == "submit_patch":
+                submitted = True
+            elif call.get("function_name") == "run_command":
+                arguments = call.get("arguments")
+                if not isinstance(arguments, Mapping):
+                    continue
+                command = arguments.get("command")
+                if isinstance(command, str) and _PYTEST_RE.search(command):
+                    commands.append(command)
+    return submitted, commands
+
+
+def _target_paths(meta: Mapping[str, Any] | None) -> list[str] | None:
+    """Return the paths a task's ``test_patch`` touches, or ``None`` when unknown.
+
+    ``None`` means the benchmark metadata needed to answer is absent (issue #88
+    rule R3): it is not "no tests".
+    """
+    if meta is None:
+        return None
+    patch = _first(meta, ("test_patch",))
+    if not isinstance(patch, str):
+        return None
+    paths: list[str] = []
+    for line in patch.splitlines():
+        if not line.startswith("+++ b/"):
+            continue
+        path = line[len("+++ b/") :].strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _delivery_record(task_dir: Path, meta: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return the grading-independent delivery record for one archived task."""
+    text = _patch_text(task_dir)
+    files, malformed = _patch_paths(text)
+    facts = _trace_facts(task_dir)
+    targets = _target_paths(meta)
+    submitted = False
+    ran_pytest = False
+    ran_target: bool | None = False
+    if facts is not None:
+        submitted, commands = facts
+        ran_pytest = bool(commands)
+        if not commands:
+            ran_target = False
+        elif targets is None:
+            ran_target = None
+        else:
+            ran_target = any(target in command for command in commands for target in targets)
+    return {
+        "patch_files": files,
+        "patch_scope": _patch_scope(text, files, malformed),
+        "submitted": submitted,
+        "ran_pytest": ran_pytest,
+        "ran_target_test": ran_target,
+    }
+
+
+def _delivery_totals(tasks: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Aggregate already-built task delivery records into ``totals.delivery``."""
+    scopes: dict[str, int] = dict.fromkeys(PATCH_SCOPES, 0)
+    for task in tasks:
+        scopes[task["delivery"]["patch_scope"]] += 1
+    return {
+        "submitted": sum(1 for task in tasks if task["delivery"]["submitted"]),
+        "ran_pytest": sum(1 for task in tasks if task["delivery"]["ran_pytest"]),
+        "ran_target_test": sum(1 for task in tasks if task["delivery"]["ran_target_test"] is True),
+        "ran_target_test_unknown": sum(
+            1 for task in tasks if task["delivery"]["ran_target_test"] is None
+        ),
+        "patch_scope": scopes,
+    }
+
+
 def _build_task(
     run_dir: Path,
     task_dir: Path,
@@ -693,6 +913,7 @@ def _build_task(
         "patch_path": str(explicit_patch)
         if explicit_patch is not None
         else (f"{instance_id}/agent_patch.diff" if patch_path.is_file() else None),
+        "delivery": _delivery_record(task_dir, meta),
         "artifacts": _artifact_index(task_dir, run_dir),
         "failure_kind": failure_kind,
         "missing_modules": missing_modules,
@@ -811,6 +1032,7 @@ def build_report(
             "wall_seconds": sum(wall) if wall else None,
             "tool_calls": sum(tool_calls) if tool_calls else None,
             "turns": sum(turns) if turns else None,
+            "delivery": _delivery_totals(tasks),
         },
         "summary": {
             "resolution_rate": _coerce_float(_first(summary or {}, _SUMMARY_RATE_KEYS)),
@@ -828,7 +1050,7 @@ def build_report(
 # rendering
 # --------------------------------------------------------------------------- #
 def render_summary(report: Mapping[str, Any]) -> str:
-    """Render the ``STATUS`` text: status token plus a five-line summary."""
+    """Render the ``STATUS`` text: status token plus a six-line summary."""
     env = report.get("env", {})
     totals: Mapping[str, Any] = report.get("totals", {})
     budgets: Mapping[str, int] = report.get("budgets", DEFAULT_BUDGETS)
@@ -870,6 +1092,23 @@ def render_summary(report: Mapping[str, Any]) -> str:
     mode = report.get("sandbox_deps_mode")
     mode_text = f" | sandbox-deps {mode}" if isinstance(mode, str) and mode else ""
 
+    def _count(value: Any) -> int:
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    delivery_text = ""
+    delivery = totals.get("delivery")
+    if isinstance(delivery, Mapping):
+        scope: Mapping[str, Any] = delivery.get("patch_scope") or {}
+        scope_text = " ".join(f"{name}={_count(scope.get(name))}" for name in PATCH_SCOPES)
+        target_unknown = _count(delivery.get("ran_target_test_unknown"))
+        unknown_text = f" | target-unknown {target_unknown}" if target_unknown > 0 else ""
+        delivery_text = (
+            f"delivery submitted {_count(delivery.get('submitted'))}/{tasks} "
+            f"| scope {scope_text} "
+            f"| pytest {_count(delivery.get('ran_pytest'))} "
+            f"| target {_count(delivery.get('ran_target_test'))}{unknown_text}"
+        )
+
     lines = [
         str(report.get("status", STATUS_BLOCKED)),
         f"run {report.get('run_id', '?')} | backend {env.get('backend', 'unknown')} "
@@ -880,10 +1119,16 @@ def render_summary(report: Mapping[str, Any]) -> str:
         f"| wall {wall_text}/{_budget_total('time_minutes')} min "
         f"| turns {turns}/{_budget_total('turns')}",
         f"failures {len(failed)}{kind_text}{env_text} | top: {top}",
-        f"schema {report.get('schema_version', SCHEMA_VERSION)} "
-        f"| report {report.get('report_path', REPORT_FILE)} "
-        f"| index {report.get('index_path', INDEX_FILE)}",
     ]
+    if delivery_text:
+        lines.append(delivery_text)
+    lines.extend(
+        [
+            f"schema {report.get('schema_version', SCHEMA_VERSION)} "
+            f"| report {report.get('report_path', REPORT_FILE)} "
+            f"| index {report.get('index_path', INDEX_FILE)}",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
