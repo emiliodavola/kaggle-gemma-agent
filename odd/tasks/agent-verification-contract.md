@@ -58,3 +58,12 @@ The shipped configuration grants a full 60-minute command timeout, the system pr
 - CI run 37718826160 on the pre-fix PR head failed only the prompt-selector synchronization test and the 40-line skill limit. The fix commit has not been pushed yet; hosted CI must pass before T9 and issue #86 can close.
 - Issues #82 and #83 were completed by merged PRs #84 and #85 and are closed. Issue #70 remains open because its requested owner-phrase regression test is absent. PR #87 remains open and assigned to emiliodavola; issue #86 remains open pending hosted CI.
 - RDD status is off (clone-local setting). Risk assessment returned high/unassessable because Git access was denied; independent verification was completed, and no native review was started.
+
+## Superseded
+
+- 2026-10-25 — the rule "keep the selected variant and materialized prompt
+  byte-identical" (Scope, first bullet) and the matching acceptance criterion no
+  longer apply: `submission/prompts/system.v3.md` was byte-identical to
+  `system.md` from birth and has been removed. `submission/prompts/system.md` is
+  now the only edit target; see issue #90 and
+  `odd/tasks/90-prompt-variant-dedup.md`.
