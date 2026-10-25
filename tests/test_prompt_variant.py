@@ -111,6 +111,23 @@ def test_cli_list(capsys: pytest.CaptureFixture[str]) -> None:
     assert "v3\tprompts/system.md" in out
 
 
+def test_is_active_is_false_when_the_variant_file_is_missing(tmp_path: Path) -> None:
+    source = _make_variant_source(tmp_path)
+    (source / "prompts" / "system.v2.md").unlink()
+
+    assert prompt_variant.is_active(source) is False
+
+
+def test_cli_apply_error_on_missing_variant_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = _make_variant_source(tmp_path)
+    (source / "prompts" / "system.v2.md").unlink()
+
+    assert prompt_variant.main(["apply", "--cwd", str(source)]) == 1
+    assert "error:" in capsys.readouterr().err
+
+
 def test_cli_error_on_missing_selector(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert prompt_variant.main(["show", "--cwd", str(tmp_path)]) == 1
     assert "error:" in capsys.readouterr().err
