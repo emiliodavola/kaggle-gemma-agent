@@ -200,8 +200,7 @@ Load a skill only when the task genuinely matches its trigger.
 
 - Never commit directly to `main`. Work on feature branches.
 - Branch naming: `docs/...`, `feat/...`, `fix/...`, `chore/...`.
-- Open PRs against the integration branch (`dev` when it exists, otherwise
-  `main`).
+- Open PRs against `main`.
 - PR descriptions must include **real command outputs** for verification, not
   claims.
 - PR bodies must follow `.github/PULL_REQUEST_TEMPLATE.md` (Summary, Changes,
@@ -211,6 +210,14 @@ Load a skill only when the task genuinely matches its trigger.
 - Never push to `main`.
 - Do not add AI attribution / `Co-Authored-By` trailers; use conventional
   commit messages.
+
+## Ownership
+
+Every issue and every PR is assigned to the person developing it, in both
+directions: an issue nobody owns and a PR nobody owns are incomplete, the same
+as a missing template section. Today that person is `emiliodavola`. Agents may
+create and edit these artifacts, but the assignee is that person unless the user
+says otherwise.
 
 ## Issue and PR templates (mandatory)
 
