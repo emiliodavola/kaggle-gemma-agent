@@ -6,12 +6,18 @@ the indirection: ``configs/prompt_variant.yaml`` names a variant, and
 :func:`apply_variant` copies that variant over the active prompt so the packed
 archive and a local trial see the same text.
 
+``v3`` is the shipped text, so it aliases the active prompt instead of owning a
+second file with the same bytes; see issue #90. ``legacy`` and ``v2`` keep their
+own files and are copied on demand.
+
 Stdlib only, mirroring :mod:`kaggle_gemma_agent.pack`.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import re
 import shutil
 import sys
@@ -23,7 +29,7 @@ ACTIVE_PROMPT = Path("prompts/system.md")
 VARIANTS: dict[str, Path] = {
     "legacy": Path("prompts/system.legacy.md"),
     "v2": Path("prompts/system.v2.md"),
-    "v3": Path("prompts/system.v3.md"),
+    "v3": ACTIVE_PROMPT,
 }
 VARIANT_LINE = re.compile(r"^\s*variant:\s*(\S+)")
 
@@ -69,29 +75,91 @@ def active_prompt_path(source_dir: Path) -> Path:
     return Path(source_dir) / ACTIVE_PROMPT
 
 
+def _path_key(path: Path) -> str:
+    """Return a comparison key ignoring relative/absolute form and Windows case."""
+    return os.path.normcase(str(Path(path).resolve()))
+
+
+def _same_file(first: Path, second: Path) -> bool:
+    """Return whether *first* and *second* denote the same file.
+
+    ``os.path.samefile`` requires both paths to exist; the resolved-key fallback
+    covers a missing active prompt, which callers must handle explicitly.
+    """
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return _path_key(first) == _path_key(second)
+
+
 def is_active(source_dir: Path) -> bool:
     """Return whether the active prompt already matches the selected variant."""
+    source_dir = Path(source_dir)
     name = read_variant(source_dir)
     variant = variant_path(source_dir, name)
     active = active_prompt_path(source_dir)
-    return variant.is_file() and active.is_file() and variant.read_bytes() == active.read_bytes()
+    if _same_file(variant, active):
+        return active.is_file()
+    if not (variant.is_file() and active.is_file()):
+        return False
+    return variant.read_bytes() == active.read_bytes()
 
 
 def apply_variant(source_dir: Path) -> tuple[str, Path]:
     """Copy the selected variant over ``prompts/system.md``.
 
-    Returns ``(variant_name, active_path)``. Raises
-    :class:`PromptVariantError` when the variant file is absent.
+    Returns ``(variant_name, active_path)``. A variant that aliases the active
+    prompt is a no-op: it returns without copying, so no
+    :class:`shutil.SameFileError` is possible. Raises
+    :class:`PromptVariantError` when a copy-backed variant file is absent, or
+    when an aliased variant finds no active prompt to stand for it.
     """
     source_dir = Path(source_dir)
     name = read_variant(source_dir)
     variant = variant_path(source_dir, name)
+    active = active_prompt_path(source_dir)
+    if _same_file(variant, active):
+        if not active.is_file():
+            raise PromptVariantError(f"{ACTIVE_PROMPT}: active prompt not found")
+        return name, active
     if not variant.is_file():
         raise PromptVariantError(f"{VARIANTS[name]}: variant file not found")
-    active = active_prompt_path(source_dir)
     active.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(variant, active)
     return name, active
+
+
+def duplicate_variants(source_dir: Path) -> list[tuple[str, str]]:
+    """Return the variant-name pairs whose prompt bytes are identical.
+
+    Copy-backed variants are always compared with each other. The active prompt
+    joins the comparison as ``active`` only while the selector names an alias,
+    because it mirrors whichever variant was materialized: comparing it against
+    a selected copy-backed variant would match after every ``apply`` and report
+    a duplicate that is just the materialized selection.
+    """
+    source_dir = Path(source_dir)
+    active = active_prompt_path(source_dir)
+    candidates = [
+        (name, variant_path(source_dir, name))
+        for name in VARIANTS
+        if not _same_file(variant_path(source_dir, name), active)
+    ]
+    if _same_file(variant_path(source_dir, read_variant(source_dir)), active):
+        candidates.append(("active", active))
+    candidates.sort()
+
+    seen: dict[str, str] = {}
+    duplicates: list[tuple[str, str]] = []
+    for name, path in candidates:
+        if not path.is_file():
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest in seen:
+            duplicates.append((seen[digest], name))
+        else:
+            seen[digest] = name
+    return duplicates
 
 
 def _print_variants() -> None:
@@ -125,7 +193,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    active = active_prompt_path(args.cwd)
+    aliased = _same_file(variant_path(args.cwd, name), active)
+
     if args.action == "show":
+        if aliased:
+            if not active.is_file():
+                print(
+                    f"variant: {name} -> {VARIANTS[name]} | {ACTIVE_PROMPT}: MISSING",
+                    file=sys.stderr,
+                )
+                return 1
+            state = "active (no copy needed)"
+            print(f"variant: {name} -> {VARIANTS[name]} | {ACTIVE_PROMPT}: {state}")
+            return 0
         state = "in sync" if is_active(args.cwd) else "OUT OF SYNC (run 'apply')"
         print(f"variant: {name} -> {VARIANTS[name]} | {ACTIVE_PROMPT}: {state}")
         return 0
@@ -135,7 +216,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except PromptVariantError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(f"applied variant '{name}' to {active}")
+    if aliased:
+        print(f"variant '{name}' is already the active prompt ({active})")
+    else:
+        print(f"applied variant '{name}' to {active}")
     return 0
 
 
