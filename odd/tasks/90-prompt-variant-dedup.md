@@ -78,11 +78,13 @@ The canonical edit target is now `submission/prompts/system.md`.
 
 ## Evidence
 
+- PR: #98 (base `main`, `Closes #90`).
+
 Focused suite after the change:
 
 ```text
 $ uv run pytest tests/test_prompt_variant.py -q
-2 failed, 24 passed in 0.30s
+2 failed, 26 passed in 0.62s
 FAILED tests/test_prompt_variant.py::test_pack_build_materializes_selected_variant
 FAILED tests/test_prompt_variant.py::test_pack_build_without_selector_keeps_prompt
 ```
@@ -96,11 +98,11 @@ $ uv run pytest tests/ -q            # before (main @ f9c5b80)
 5 failed, 340 passed in 9.34s
 
 $ uv run pytest tests/ -q            # after
-5 failed, 350 passed in 9.96s
+5 failed, 352 passed in 11.11s
 ```
 
 The failure set is identical (same five named tests); the passed count grows by
-the ten added tests.
+the twelve added tests.
 
 Static gates:
 
@@ -176,3 +178,6 @@ The duplicate is gone from the archive (22069 -> 19660 bytes) and
   wrong reason.
 - **L5** (out of scope, unchanged): excluding variant files from the packed
   archive and recording the variant name in `provenance` remain separate issues.
+- **L6** (coverage detail): the first green run left `is_active`'s copy-backed
+  fallback and the CLI `apply` error path untested; two tests were added in
+  `4eefab4` and the passed count in the evidence above reflects them.
