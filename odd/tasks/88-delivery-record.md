@@ -115,7 +115,7 @@ and `test_build_report_reports_measured_totals_and_reason` were updated from
   `delivery submitted 11/13 | scope src_only=5 edits_tests=2 config_only=1
   scratch=3 none=1 corrupted=1 | pytest 5 | target 3`, with `STATUS` at seven
   lines.
-- Issue: #88. PR: filled in when opened.
+- Issue: #88. PR: #96 (`feat/88-delivery-record`).
 
 Risk: none — additive report fields and one extra STATUS line; no stored data,
 credentials, concurrency, dependency or release surface changes, and no
