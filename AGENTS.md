@@ -200,8 +200,7 @@ Load a skill only when the task genuinely matches its trigger.
 
 - Never commit directly to `main`. Work on feature branches.
 - Branch naming: `docs/...`, `feat/...`, `fix/...`, `chore/...`.
-- Open PRs against the integration branch (`dev` when it exists, otherwise
-  `main`).
+- Open PRs against `main`.
 - PR descriptions must include **real command outputs** for verification, not
   claims.
 - PR bodies must follow `.github/PULL_REQUEST_TEMPLATE.md` (Summary, Changes,
