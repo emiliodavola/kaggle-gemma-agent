@@ -211,6 +211,14 @@ Load a skill only when the task genuinely matches its trigger.
 - Do not add AI attribution / `Co-Authored-By` trailers; use conventional
   commit messages.
 
+## Ownership
+
+Every issue and every PR is assigned to the person developing it, in both
+directions: an issue nobody owns and a PR nobody owns are incomplete, the same
+as a missing template section. Today that person is `emiliodavola`. Agents may
+create and edit these artifacts, but the assignee is that person unless the user
+says otherwise.
+
 ## Issue and PR templates (mandatory)
 
 Every issue and every PR **must** use the repository templates. No free-form
