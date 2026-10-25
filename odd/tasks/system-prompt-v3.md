@@ -65,3 +65,12 @@ Baseline from `trace_metrics.py`:
   answer is known, compile + clean before submit, always submit).
 - PR: (filled when opened).
 
+## Superseded
+
+- 2026-10-25 — the byte-identical state recorded in the evidence above is a
+  defect, not an outcome: `system.v3.md` held the same bytes as `system.md` from
+  the commit that added it, so the variant was never distinguishable and every
+  "re-materialize v3" was a copy onto itself. The file is removed and `v3` now
+  aliases the active prompt; see issue #90 and
+  `odd/tasks/90-prompt-variant-dedup.md`.
+
