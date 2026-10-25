@@ -669,18 +669,18 @@ uv run python -m kaggle_gemma_agent.harness_runs archive results\run_01 `
     --junit-dir junit --tasks data\raw\tasks.jsonl --backend <model-name>
 ```
 
-2. **Confirm the rollup** — the same six lines Hermes will read:
+2. **Confirm the rollup** — the same seven lines Hermes will read:
 
 ```powershell
 uv run python -m kaggle_gemma_agent.harness_runs report runs\<UTC>
 ```
 
 `runs\<UTC>\STATUS` is the polling signal: `DONE`, `BLOCKED`, or `PARTIAL`,
-followed by a five-line summary (backend; tasks/resolved/rate; tool calls,
-wall time, and turns against budget; failures; report/index paths).
+followed by a six-line summary (backend; tasks/resolved/rate; tool calls,
+wall time, and turns against budget; failures; delivery; report/index paths).
 `runs\<UTC>\report.json` carries the per-task records (tool calls vs 100,
-turns, pass/fail, JUnit `FAIL_TO_PASS`/`PASS_TO_PASS`, patch `sha256`, and
-every artifact's path/size/hash). `runs/index.jsonl` gets one line per
+turns, pass/fail, JUnit `FAIL_TO_PASS`/`PASS_TO_PASS`, patch `sha256`, delivery,
+and every artifact's path/size/hash). `runs/index.jsonl` gets one line per
 finished run. `runs/` is git-ignored — never commit it.
 
 If you post anything at all, post the `STATUS` block plus the `runs\<UTC>`

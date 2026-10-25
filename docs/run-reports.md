@@ -24,7 +24,7 @@ runs/
 ├── index-archive/                    # compacted index lines (history, never lost)
 │   └── <first-run-id>__<last-run-id>.jsonl
 └── <UTC stamp>/                      # e.g. 20260930T120000Z
-    ├── STATUS                        # DONE|BLOCKED|PARTIAL + 5-line summary
+    ├── STATUS                        # DONE|BLOCKED|PARTIAL + 6-line summary
     ├── report.json                   # report 1.0 (metadata + first task chunk)
     ├── report.part0002.json          # only when tasks > REPORT_MAX_TASKS
     ├── manifest.json                 # archiver: source paths, per-task artifact sizes
@@ -82,7 +82,7 @@ Top-level keys:
 | `missing_module_tasks` | `object` | `{module: [instance_id, ...]}` mapping each missing module to the sorted ids of the tasks that miss it. |
 | `env` | `object` | Host/backend names — **never credential values** (see §7). |
 | `budgets` | `object` | Per-task budgets: `tool_calls` 100, `time_minutes` 60, `turns` 500. |
-| `totals` | `object` | `tasks`, `resolved`, `unresolved`, `unknown`, `measured`, `resolution_rate`, `wall_seconds`, `tool_calls`, `turns`. |
+| `totals` | `object` | `tasks`, `resolved`, `unresolved`, `unknown`, `measured`, `resolution_rate`, `wall_seconds`, `tool_calls`, `turns`, `delivery`. |
 | `summary` | `object` | Echo of `summary.json` (`resolution_rate`, `resolved`, `total`) or `null`s. |
 | `notes` | `list[str]` | Non-fatal parse notes (e.g. `task_results.jsonl:3 invalid JSON`). |
 | `tasks` | `list[object]` | Task records (first chunk when split; see §6). |
@@ -110,6 +110,7 @@ Top-level keys:
 | `error` | `str \| null` | Harness error text when present. |
 | `patch_sha256` | `str \| null` | `sha256` of `agent_patch.diff`. |
 | `patch_path` | `str \| null` | Run-relative path to the patch. |
+| `delivery` | `object` | Grading-independent delivery record; see §2.1. |
 | `artifacts` | `object` | `run-relative path → {size, sha256}` for **every** task file. |
 | `failure_tail` | `object \| null` | `{source, chars, truncated, text}` for non-passing tasks. |
 | `failure_kind` | `str \| null` | Coarse cause from `test_output.log`: `collection_error` / `test_failure` / `timeout` / `unknown`; `null` when the task passed or has no test log. |
@@ -124,9 +125,76 @@ Expected nodes come from (in order): the result line's `FAIL_TO_PASS` /
 case-insensitively through documented aliases and records (never raises on)
 unmapped input.
 
+### 2.1 `delivery` — a grading-independent delivery signal
+
+`delivery` answers "did the agent produce a usable, in-scope, self-checked
+deliverable?" from the run's own archived bytes (patch headers and trace tool
+calls) plus the optional `tasks.jsonl` metadata. It is **descriptive**: counts
+and one categorical scope. It carries no rate, score or verdict, and it never
+feeds `resolved`, `resolution_rate`, `unresolved` or `measured`.
+
+Per-task fields (in this order):
+
+| Field | Type | Meaning |
+| :--- | :--- | :--- |
+| `patch_files` | `list[str]` | Post-image paths (`b/…`) from every `diff --git` header, first-appearance order, de-duplicated. Paths are opaque strings: never resolved, joined or opened. |
+| `patch_scope` | `str` | Exactly one of `PATCH_SCOPES`; first match wins (precedence below). |
+| `submitted` | `bool` | The trace contains a `submit_patch` tool call. |
+| `ran_pytest` | `bool` | At least one `run_command` command contains `pytest`. |
+| `ran_target_test` | `bool \| null` | A pytest command mentions a path from the task's `test_patch`. `null` means "cannot tell", not "no". |
+
+`patch_scope` precedence:
+
+1. `none` — `agent_patch.diff` is absent or blank.
+2. `corrupted` — a `diff --git` header does not parse, or the patch has no
+   parsed header at all.
+3. `edits_tests` — any path is a test path (`tests/`/`test/` first component,
+   `test_*.py`, `*_test.py`).
+4. `scratch` — any path is neither under `src/`, nor a test path, nor a config
+   path (root `repro*.py`, `docs/`, anything unrecognized).
+5. `config_only` — every path is repository configuration (`tox.ini`,
+   `setup.cfg`, `requirements*.txt`, `.github/…`, …).
+6. `src_only` — every remaining path is under `src/`.
+
+`ran_target_test` is tri-state. When the trace is unavailable, or no pytest
+command ran, it is `false` (the run's own artifact is observably missing or
+silent). When pytest ran but `tasks.jsonl` was not supplied to `build_report`
+(or the task has no `test_patch` string), it is `null`: the benchmark input
+needed to answer is missing, and that is not a zero. Target paths come only from
+`+++ b/…` lines of the instance's `test_patch` in `data/raw/tasks.jsonl`; the
+per-task `metadata.json` carries no test patch.
+
+The pytest match is a **textual mention detector**, not a shell parser:
+`_PYTEST_RE = r"\bpytest\b"` also matches a command that merely inspects a file
+mentioning pytest (`grep -n pytest tox.ini`). This is deliberate: the archived
+corpus contains a heredoc that runs pytest through `subprocess`, which a
+first-token rule would miss. Treat `ran_pytest` as "pytest was mentioned in a
+command", never as proof that pytest executed.
+
+`totals.delivery` aggregates the already-built records (never a second artifact
+read):
+
+```json
+"delivery": {
+  "submitted": 11,
+  "ran_pytest": 5,
+  "ran_target_test": 3,
+  "ran_target_test_unknown": 0,
+  "patch_scope": {
+    "src_only": 5, "edits_tests": 2, "config_only": 1,
+    "scratch": 3, "none": 1, "corrupted": 1
+  }
+}
+```
+
+Every value except `patch_scope` is an `int` count; `ran_target_test` counts
+only `true` and `ran_target_test_unknown` counts only `null`. All six
+`patch_scope` keys are always present, in `PATCH_SCOPES` order, and sum to
+`totals.tasks`. `delivery` is not written to `runs/index.jsonl`.
+
 ## 3. `STATUS` — the polling signal
 
-`STATUS` is a six-line text file: the status token, then a fixed five-line
+`STATUS` is a seven-line text file: the status token, then a fixed six-line
 human summary. Hermes and the host print the **same** text via the `report`
 subcommand.
 
@@ -136,6 +204,7 @@ run 20260930T120000Z | backend muse-spark | docker 27.3.1 | os Linux ...
 tasks 1 | resolved 1 | rate 1.000 | unknown 0
 tool_calls 37/100 | wall 13.5/60 min | turns 14/500
 failures 0 | top: none
+delivery submitted 1/1 | scope src_only=1 edits_tests=0 config_only=0 scratch=0 none=0 corrupted=0 | pytest 1 | target 1
 schema 1.0 | report runs/20260930T120000Z/report.json | index runs/index.jsonl
 ```
 
@@ -143,6 +212,14 @@ When at least one task failed, the `failures` line also carries the coarse
 causes, e.g. `failures 2 | kinds collection_error=2 | top: fastapi_15588, ...`.
 That distinguishes an environment/collection failure from an assertion failure
 without opening `failure_tail`; the per-task value is `failure_kind` above.
+
+The `delivery` line is rendered only when `totals.delivery` is present, so a
+report written before this field existed keeps its old six-line `STATUS`. It
+reports `submitted <n>/<tasks>`, the six `patch_scope` counts in `PATCH_SCOPES`
+order, `pytest <n>` and `target <n>`. When `ran_target_test_unknown` is
+positive it appends `| target-unknown <n>`, mirroring the conditional
+`| measured m/t` on the `tasks` line: an unknown is counted, never folded into
+`false` and never into the rate.
 
 When any non-passing task is missing a module, `environment_blocked` is set and
 the `failures` line additionally carries `| env missing: <names>`, e.g.
@@ -226,7 +303,7 @@ appears anywhere in the serialized environment.
 
 1. Poll `runs/*/STATUS` (newest by modification time). Absence means the run is
    still in progress — `STATUS` is written last.
-2. Read all six lines. The first token is the verdict: `DONE`, `BLOCKED`, or
+2. Read all seven lines. The first token is the verdict: `DONE`, `BLOCKED`, or
    `PARTIAL`.
 3. For per-task detail, read `runs/<id>/report.json` and reassemble chunks:
    `python -c "import json,sys; from pathlib import Path; from kaggle_gemma_agent import run_report; print(json.dumps(run_report.load_report(Path(sys.argv[1])), indent=2))" runs/<id>`.
