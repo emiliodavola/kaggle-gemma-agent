@@ -46,6 +46,98 @@ def test_windows_executable_appends_exe_only_on_wsl() -> None:
     assert launcher.windows_executable("lms", on_wsl=False) == "lms"
 
 
+def test_resolve_binary_uses_which_and_keeps_the_bare_name() -> None:
+    seen: list[str] = []
+
+    def fake_which(name: str) -> str | None:
+        seen.append(name)
+        return "/mnt/c/Users/elaze/.lmstudio/bin/lms.exe"
+
+    resolved = launcher.resolve_binary(
+        "lms",
+        on_wsl=True,
+        env_var="HARNESS_TRIAL_LMS_BIN",
+        which=fake_which,
+        fallbacks=[],
+    )
+    assert resolved == "lms.exe"
+    assert seen == ["lms.exe"]
+
+
+def test_resolve_binary_accepts_explicit_existing_path(tmp_path: Path) -> None:
+    binary = tmp_path / "lms.exe"
+    binary.write_text("", encoding="utf-8")
+    resolved = launcher.resolve_binary(
+        str(binary).removesuffix(".exe"),
+        on_wsl=True,
+        env_var="HARNESS_TRIAL_LMS_BIN",
+        which=lambda name: None,
+        fallbacks=[],
+    )
+    assert resolved == str(binary)
+
+
+def test_resolve_binary_falls_back_to_known_install_location(tmp_path: Path) -> None:
+    binary = tmp_path / "lms.exe"
+    binary.write_text("", encoding="utf-8")
+    resolved = launcher.resolve_binary(
+        "lms",
+        on_wsl=True,
+        env_var="HARNESS_TRIAL_LMS_BIN",
+        which=lambda name: None,
+        fallbacks=[binary],
+    )
+    assert resolved == str(binary)
+
+
+def test_resolve_binary_raises_actionable_error_when_missing() -> None:
+    with pytest.raises(launcher.LauncherError) as excinfo:
+        launcher.resolve_binary(
+            "lms",
+            on_wsl=True,
+            env_var="HARNESS_TRIAL_LMS_BIN",
+            which=lambda name: None,
+            fallbacks=[],
+        )
+    message = str(excinfo.value)
+    assert "lms.exe" in message
+    assert "HARNESS_TRIAL_LMS_BIN" in message
+
+
+def test_resolve_binary_rejects_ambiguous_fallbacks(tmp_path: Path) -> None:
+    first = tmp_path / "a" / "lms.exe"
+    second = tmp_path / "b" / "lms.exe"
+    for path in (first, second):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    with pytest.raises(launcher.LauncherError, match="ambiguous"):
+        launcher.resolve_binary(
+            "lms",
+            on_wsl=True,
+            env_var="HARNESS_TRIAL_LMS_BIN",
+            which=lambda name: None,
+            fallbacks=[first, second],
+        )
+
+
+def test_fallback_binary_paths_finds_lmstudio_under_wsl_users_root(tmp_path: Path) -> None:
+    binary = tmp_path / "elaze" / ".lmstudio" / "bin" / "lms.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+    found = launcher.fallback_binary_paths("lms.exe", on_wsl=True, wsl_users_root=tmp_path)
+    assert found == [binary]
+
+
+def test_fallback_binary_paths_uses_home_off_wsl(tmp_path: Path) -> None:
+    expected = tmp_path / ".lmstudio" / "bin" / "lms.exe"
+    found = launcher.fallback_binary_paths("lms.exe", on_wsl=False, home=tmp_path)
+    assert found == [expected]
+
+
+def test_fallback_binary_paths_ignores_unknown_binaries() -> None:
+    assert launcher.fallback_binary_paths("llama-server.exe", on_wsl=True) == []
+
+
 def test_resolve_backend_from_explicit_env() -> None:
     assert launcher.resolve_backend(None, {"HARNESS_TRIAL_LAUNCH": "lmstudio"}) == "lmstudio"
 
@@ -140,6 +232,93 @@ def test_wait_for_endpoint_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(launcher.urllib.request, "urlopen", raise_url)
     with pytest.raises(launcher.LauncherError, match="did not answer"):
         launcher.wait_for_endpoint("http://127.0.0.1:8080/v1", timeout_seconds=0.0)
+
+
+def test_run_converts_missing_binary_into_launcher_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_missing(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError(2, "No such file or directory", "lms.exe")
+
+    monkeypatch.setattr(launcher.subprocess, "run", raise_missing)
+    with pytest.raises(launcher.LauncherError, match=r"lms\.exe"):
+        launcher._run(["lms.exe", "server", "start"])
+
+
+def test_launch_detached_converts_failure_into_launcher_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_called(*args: object, **kwargs: object) -> object:
+        raise launcher.subprocess.CalledProcessError(1, "powershell.exe")
+
+    monkeypatch.setattr(launcher.subprocess, "run", raise_called)
+    with pytest.raises(launcher.LauncherError, match=r"powershell\.exe"):
+        launcher.launch_detached(["powershell.exe", "-Command", "Start-Process"], on_wsl=True)
+
+
+def test_start_runs_each_lms_command_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], check: bool = False) -> object:
+        calls.append(list(command))
+        return launcher.subprocess.CompletedProcess(list(command), 0)
+
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher, "resolve_binary", lambda *args, **kwargs: "lms.exe")
+    monkeypatch.setattr(launcher, "wait_for_endpoint", lambda *args, **kwargs: {})
+    args = launcher.argparse.Namespace(
+        action="start", backend="lmstudio", context=26214, timeout=1.0, dry_run=False
+    )
+    env = {"HARNESS_MODEL": "gemma-4-31b-it-qat"}
+
+    assert launcher.start(args, env) == 0
+    out = capsys.readouterr().out
+    assert out.count("$ lms.exe server start") == 1
+    assert out.count("$ lms.exe load") == 1
+    assert calls == [
+        ["lms.exe", "server", "start"],
+        [
+            "lms.exe",
+            "load",
+            "gemma-4-31b-it-qat",
+            "--context-length",
+            "26214",
+            "--gpu",
+            "max",
+            "-y",
+            "--identifier",
+            "gemma-4-31b-it-qat",
+        ],
+    ]
+
+
+def test_resolve_binary_required_false_returns_the_bare_name() -> None:
+    resolved = launcher.resolve_binary(
+        "lms",
+        on_wsl=True,
+        env_var="HARNESS_TRIAL_LMS_BIN",
+        which=lambda name: None,
+        fallbacks=[],
+        required=False,
+    )
+    assert resolved == "lms.exe"
+
+
+def test_start_dry_run_tolerates_missing_binary(capsys: pytest.CaptureFixture[str]) -> None:
+    args = launcher.argparse.Namespace(
+        action="start", backend="lmstudio", context=26214, timeout=1.0, dry_run=True
+    )
+    env = {
+        "HARNESS_TRIAL_LMS_BIN": "not-installed-yet",
+        "HARNESS_MODEL": "gemma-4-31b-it-qat",
+    }
+
+    assert launcher.start(args, env) == 0
+    out = capsys.readouterr().out
+    assert "not-installed-yet".removesuffix(".exe") in out
+    assert "dry-run: not executing" in out
 
 
 def test_start_dry_run_prints_llamacpp_command(capsys: pytest.CaptureFixture[str]) -> None:
