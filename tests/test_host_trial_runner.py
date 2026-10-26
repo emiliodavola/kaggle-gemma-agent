@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
@@ -332,6 +333,61 @@ def test_describe_task_resolution_source_is_default() -> None:
     assert resolution.source == runner.TASK_SOURCE_DEFAULT
     assert resolution.task_ids == runner.TASK_IDS
     assert resolution.shadowed is False
+
+
+def test_describe_task_resolution_subset_wins() -> None:
+    subset = SimpleNamespace(id="dev-v1", task_ids=("a__1", "b__2"))
+
+    resolution = runner.describe_task_resolution(
+        {"HARNESS_TRIAL_TASKS": "file"},
+        {"HARNESS_TRIAL_TASKS": "env"},
+        requested=["ignored"],
+        subset=subset,
+    )
+
+    assert resolution.source == runner.TASK_SOURCE_SUBSET
+    assert resolution.task_ids == ("a__1", "b__2")
+    assert resolution.request == "dev-v1"
+
+
+def test_note_task_resolution_logs_subset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    subset = SimpleNamespace(id="dev-v1", task_ids=("a__1", "b__2"))
+    resolution = runner.describe_task_resolution({}, {}, subset=subset)
+
+    runner.note_task_resolution(tmp_path / ".env", resolution)
+
+    out = capsys.readouterr().out
+    assert "trial tasks source: --subset (dev-v1)" in out
+    assert "a__1, b__2" in out
+
+
+def test_load_subset_for_trial_validates_the_corpus(tmp_path: Path) -> None:
+    subset_path = tmp_path / "experiments" / "subsets" / "dev-v1.json"
+    subset_path.parent.mkdir(parents=True)
+    subset_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "id": "dev-v1",
+                "description": "contrast set",
+                "selection": "chosen for signal",
+                "task_ids": ["a__1"],
+                "counts": {"org/a": 1},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.jsonl"
+    tasks.write_text(json.dumps({"instance_id": "a__1", "repo": "org/a"}) + "\n", encoding="utf-8")
+
+    loaded = runner.load_subset_for_trial("dev-v1", repo_root=tmp_path, tasks_file=tasks)
+
+    assert loaded.id == "dev-v1"
+    with pytest.raises(runner.TrialError, match="invalid --subset"):
+        runner.load_subset_for_trial("missing", repo_root=tmp_path, tasks_file=tasks)
 
 
 def test_describe_task_resolution_same_value_is_not_shadowed() -> None:
@@ -1705,6 +1761,23 @@ def test_build_archive_args_includes_optional_timestamp() -> None:
 
     assert args[args.index("--timestamp") + 1] == "20260101T000000Z"
     assert "--timestamp" not in runner.build_archive_args(Path("r"), Path("j"), Path("t"))
+
+
+def test_build_archive_args_includes_experiment_identity() -> None:
+    args = runner.build_archive_args(
+        Path("results/run_01"),
+        Path("junit"),
+        Path("data/raw/tasks.jsonl"),
+        backend_name="lmstudio",
+        model="gemma-4-31b-it-qat",
+        experiment="e1",
+        subset=Path("experiments/subsets/dev-v1.json"),
+    )
+
+    assert args[args.index("--backend-name") + 1] == "lmstudio"
+    assert args[args.index("--model") + 1] == "gemma-4-31b-it-qat"
+    assert args[args.index("--experiment") + 1] == "e1"
+    assert args[args.index("--subset") + 1] == str(Path("experiments/subsets/dev-v1.json"))
 
 
 def test_harness_run_id_uses_the_archiver_source() -> None:

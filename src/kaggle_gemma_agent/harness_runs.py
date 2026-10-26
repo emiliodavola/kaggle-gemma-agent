@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from kaggle_gemma_agent import run_report
+from kaggle_gemma_agent import run_report, subsets
 
 # (archive filename, results subdir, filename template with ``{id}``).
 ARTIFACT_SOURCES: tuple[tuple[str, str, str], ...] = (
@@ -132,6 +132,43 @@ def _find_junit(junit_dir: Path, instance_id: str) -> Path | None:
     return None
 
 
+def _experiment_block(
+    experiment: str | None,
+    subset: str | Path | None,
+    task_ids: Sequence[str],
+    *,
+    backend_name: str | None,
+    model: str | None,
+    budgets: Mapping[str, int] | None,
+    repo_root: Path | None,
+) -> dict[str, Any] | None:
+    """Return the run's experiment identity, or ``None`` when none was declared."""
+    if experiment is None and subset is None:
+        return None
+    block: dict[str, Any] = {
+        "id": experiment,
+        "subset": None,
+        "backend": backend_name,
+        "model": model,
+        "budgets": dict(budgets) if budgets is not None else dict(run_report.DEFAULT_BUDGETS),
+        "task_ids": list(task_ids),
+        "subset_missing": [],
+        "subset_extra": [],
+    }
+    if subset is None:
+        return block
+    try:
+        loaded = subsets.load_subset(subset, root=repo_root)
+    except subsets.SubsetError as exc:
+        raise HarnessRunsError(f"invalid subset: {exc}") from exc
+    block["subset"] = loaded.identity()
+    wanted = set(loaded.task_ids)
+    archived = set(task_ids)
+    block["subset_missing"] = sorted(wanted - archived)
+    block["subset_extra"] = sorted(archived - wanted)
+    return block
+
+
 def archive_run(
     results_dir: Path,
     *,
@@ -141,6 +178,10 @@ def archive_run(
     finalize: bool = True,
     tasks_path: Path | None = None,
     backend: str | None = None,
+    backend_name: str | None = None,
+    model: str | None = None,
+    experiment: str | None = None,
+    subset: str | Path | None = None,
     budgets: Mapping[str, int] | None = None,
     index_path: Path | None = None,
     sandbox_deps_mode: str | None = None,
@@ -152,6 +193,12 @@ def archive_run(
     *results_dir* does not exist or the destination already exists. Unless
     ``finalize`` is false, the file-based handoff (``report.json`` + ``STATUS``
     + ``runs/index.jsonl``) is written by :func:`run_report.finalize_run`.
+
+    When *experiment* or *subset* is given, the manifest carries an
+    ``experiment`` block naming the declared experiment, the subset identity and
+    the ids the subset wanted but the run did not archive. That block is what
+    makes two runs comparable later; an invalid subset raises instead of being
+    recorded as if it had been checked.
     """
     results_dir = Path(results_dir)
     if not results_dir.is_dir():
@@ -192,6 +239,16 @@ def archive_run(
     for name in (RUN_SUMMARY, RUN_TASKS):
         _copy(results_dir / name, run_dir / name)
 
+    task_ids = [str(task["instance_id"]) for task in tasks]
+    experiment_block = _experiment_block(
+        experiment,
+        subset,
+        task_ids,
+        backend_name=backend_name,
+        model=model,
+        budgets=budgets,
+        repo_root=repo_root,
+    )
     manifest = {
         "schema_version": run_report.SCHEMA_VERSION,
         "created_at": stamp,
@@ -200,6 +257,7 @@ def archive_run(
         "task_count": len(tasks),
         "tasks": tasks,
         "sandbox_deps_mode": sandbox_deps_mode,
+        "experiment": experiment_block,
         "provenance": provenance_hashes(repo_root),
     }
     (run_dir / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -406,6 +464,18 @@ def _main_archive(argv: Sequence[str]) -> int:
     parser.add_argument("--timestamp", default=None, help="override the UTC stamp")
     parser.add_argument("--tasks", default=None, type=Path, help="tasks.jsonl for test sets")
     parser.add_argument("--backend", default=None, help="backend/model name for the report")
+    parser.add_argument("--model", default=None, help="served model id for the experiment block")
+    parser.add_argument(
+        "--backend-name",
+        default=None,
+        help="trial backend name for the experiment block (e.g. lmstudio)",
+    )
+    parser.add_argument("--experiment", default=None, help="experiment id recorded in the manifest")
+    parser.add_argument(
+        "--subset",
+        default=None,
+        help="subset name or path recorded in the manifest (e.g. dev-v1)",
+    )
     parser.add_argument(
         "--sandbox-deps-mode",
         choices=("faithful", "repaired"),
@@ -433,6 +503,10 @@ def _main_archive(argv: Sequence[str]) -> int:
             finalize=not args.no_report,
             tasks_path=args.tasks,
             backend=args.backend,
+            backend_name=args.backend_name,
+            model=args.model,
+            experiment=args.experiment,
+            subset=args.subset,
             sandbox_deps_mode=args.sandbox_deps_mode,
         )
     except HarnessRunsError as exc:

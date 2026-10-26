@@ -200,6 +200,11 @@ def _load_manifest(run_dir: Path) -> dict[str, Any]:
     return _load_json(Path(run_dir) / "manifest.json") or {}
 
 
+def load_manifest(run_dir: Path) -> dict[str, Any]:
+    """Return ``run_dir/manifest.json`` parsed, or ``{}`` when absent/invalid."""
+    return _load_manifest(run_dir)
+
+
 def _lower_map(mapping: Mapping[str, Any]) -> dict[str, Any]:
     """Return *mapping* keyed by lower-cased names, first occurrence winning."""
     result: dict[str, Any] = {}
@@ -951,6 +956,8 @@ def build_report(
     sandbox_deps_mode = manifest.get("sandbox_deps_mode")
     if not isinstance(sandbox_deps_mode, str):
         sandbox_deps_mode = None
+    experiment = manifest.get("experiment")
+    experiment_block = experiment if isinstance(experiment, Mapping) else None
     records, notes = _load_task_results(run_dir / "task_results.jsonl")
     env = detect_environment(environ, docker_version=docker_version)
     run_backend = backend or str(env["backend"])
@@ -1014,6 +1021,7 @@ def build_report(
         "schema_version": SCHEMA_VERSION,
         "run_id": run_dir.name,
         "sandbox_deps_mode": sandbox_deps_mode,
+        "experiment": experiment_block,
         "generated_at": generated_at or datetime.now(UTC).isoformat(),
         "status": status,
         "status_reasons": reasons,
@@ -1049,6 +1057,23 @@ def build_report(
 # --------------------------------------------------------------------------- #
 # rendering
 # --------------------------------------------------------------------------- #
+def _experiment_line(experiment: Any) -> str | None:
+    """Return the ``experiment ...`` STATUS line, or ``None`` when none is recorded."""
+    if not isinstance(experiment, Mapping):
+        return None
+    identifier = experiment.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    subset = experiment.get("subset")
+    if isinstance(subset, Mapping):
+        subset_id = subset.get("id")
+        digest = subset.get("sha256")
+        if isinstance(subset_id, str) and subset_id:
+            short = str(digest)[:8] if isinstance(digest, str) and digest else "unknown"
+            return f"experiment {identifier} | subset {subset_id}@{short}"
+    return f"experiment {identifier} | subset unknown"
+
+
 def render_summary(report: Mapping[str, Any]) -> str:
     """Render the ``STATUS`` text: status token plus a six-line summary."""
     env = report.get("env", {})
@@ -1122,6 +1147,9 @@ def render_summary(report: Mapping[str, Any]) -> str:
     ]
     if delivery_text:
         lines.append(delivery_text)
+    experiment_line = _experiment_line(report.get("experiment"))
+    if experiment_line:
+        lines.insert(2, experiment_line)
     lines.extend(
         [
             f"schema {report.get('schema_version', SCHEMA_VERSION)} "
@@ -1193,6 +1221,8 @@ def index_entry(report: Mapping[str, Any]) -> dict[str, Any]:
     """Build the one-line index entry for a finished run."""
     totals = report.get("totals", {})
     env = report.get("env", {})
+    experiment = report.get("experiment")
+    subset = experiment.get("subset") if isinstance(experiment, Mapping) else None
     return {
         "run_id": report.get("run_id"),
         "timestamp": report.get("generated_at"),
@@ -1202,6 +1232,8 @@ def index_entry(report: Mapping[str, Any]) -> dict[str, Any]:
         "resolved": totals.get("resolved", 0),
         "rate": totals.get("resolution_rate"),
         "report": report.get("report_path", f"{report.get('run_id')}/{REPORT_FILE}"),
+        "experiment": experiment.get("id") if isinstance(experiment, Mapping) else None,
+        "subset": subset.get("id") if isinstance(subset, Mapping) else None,
     }
 
 

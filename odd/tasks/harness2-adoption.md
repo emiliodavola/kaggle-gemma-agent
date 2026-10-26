@@ -84,11 +84,13 @@ green, and `uv run pytest tests/ -q` with no new failing node id relative to the
 ## Tasks
 
 - [x] T1 - Baseline and tracker. Route: inline. Evidence: `5 failed, 389 passed`; `ruff` clean.
-- [x] T2 - `subsets.py`, `dev-v1.json`, validation tests. Route: inline. Commit: pending.
+- [x] T2 - `subsets.py`, `dev-v1.json`, validation tests. Route: inline. Commit: `c2fe171`.
   Evidence: `uv run python -m kaggle_gemma_agent.subsets validate dev-v1` -> 11 tasks,
   sha256 `a9ba8994...`; `uv run pytest tests/test_subsets.py -q` -> 9 passed; mypy and pyright clean.
-- [ ] T3 - Manifest experiment block, report/STATUS line, archiver flags, tests. Route: inline. Commit: pending.
-- [ ] T4 - Runner `--subset`/`--experiment`, tests. Route: inline. Commit: pending.
+- [x] T3 - Manifest experiment block, report/STATUS line, archiver flags, tests. Route: inline. Commit: pending.
+- [x] T4 - Runner `--subset`/`--experiment`, tests. Route: inline. Commit: pending.
+  Evidence: focused runner tests 5 passed; `run_host_trial.py --help` lists both flags;
+  full suite `5 failed, 409 passed` (same five baseline node ids).
 - [ ] T5 - `experiments.py` start/finish/compare, tests, docs and journal entry. Route: inline. Commit: pending (closes Level 0).
 - [ ] T6 - harness2 fork, adapter patch, `setup.sh`, dry-run validation. Route: inline. Commit: pending.
 - [ ] T7 - Falsifier, 4 rollouts, run analysis, journal entry. Route: inline. Commit: pending (closes Level 1).

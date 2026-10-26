@@ -110,6 +110,102 @@ def test_archive_run_records_provenance_in_manifest(tmp_path: Path) -> None:
     assert all(value is None for value in manifest["provenance"].values())
 
 
+def _write_subset(root: Path, ids: list[str], counts: dict[str, int]) -> Path:
+    """Write a minimal subset document under *root* and return its path."""
+    path = root / "experiments" / "subsets" / "dev-v1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "id": "dev-v1",
+                "description": "contrast set",
+                "selection": "chosen for signal",
+                "task_ids": sorted(ids),
+                "counts": counts,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_archive_run_records_experiment_and_subset(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+    subset = _write_subset(tmp_path, ["a__1", "b__2"], {"org/a": 1, "org/b": 1})
+
+    run_dir = harness_runs.archive_run(
+        results,
+        runs_root=tmp_path / "runs",
+        timestamp="exp",
+        finalize=False,
+        repo_root=tmp_path,
+        backend_name="lmstudio",
+        model="gemma-4-31b-it-qat",
+        experiment="e1",
+        subset=subset,
+    )
+
+    manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
+    block = manifest["experiment"]
+    assert block["id"] == "e1"
+    assert block["subset"]["id"] == "dev-v1"
+    assert block["subset"]["task_ids"] == ["a__1", "b__2"]
+    assert block["subset_missing"] == []
+    assert block["subset_extra"] == []
+    assert block["backend"] == "lmstudio"
+    assert block["model"] == "gemma-4-31b-it-qat"
+    assert block["budgets"]["tool_calls"] == 100
+
+
+def test_archive_run_records_subset_gaps(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+    subset = _write_subset(tmp_path, ["a__1", "c__3"], {"org/a": 1, "org/c": 1})
+
+    run_dir = harness_runs.archive_run(
+        results,
+        runs_root=tmp_path / "runs",
+        timestamp="gap",
+        finalize=False,
+        repo_root=tmp_path,
+        experiment="e2",
+        subset=subset,
+    )
+
+    manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["experiment"]["subset_missing"] == ["c__3"]
+    assert manifest["experiment"]["subset_extra"] == ["b__2"]
+
+
+def test_archive_run_without_experiment_writes_null(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+
+    run_dir = harness_runs.archive_run(
+        results,
+        runs_root=tmp_path / "runs",
+        timestamp="plain",
+        finalize=False,
+    )
+
+    manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["experiment"] is None
+
+
+def test_archive_run_rejects_invalid_subset(tmp_path: Path) -> None:
+    results = _make_results(tmp_path)
+
+    with pytest.raises(harness_runs.HarnessRunsError, match="invalid subset"):
+        harness_runs.archive_run(
+            results,
+            runs_root=tmp_path / "runs",
+            timestamp="bad",
+            finalize=False,
+            experiment="e3",
+            subset=tmp_path / "missing.json",
+        )
+
+
 def test_provenance_skills_hash_is_order_independent_and_byte_sensitive(tmp_path: Path) -> None:
     skills = tmp_path / "submission" / "skills"
     assert harness_runs.provenance_hashes(repo_root=tmp_path)["skills"] is None
