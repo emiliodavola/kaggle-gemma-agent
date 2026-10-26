@@ -11,9 +11,9 @@ Limits: A decision document only. No rollout was run for it, so every cost figur
 
 Harness changes are proposed by hand and validated by a resolution rate the
 container dominates: `1/13` in run `20261009T122847Z` (13 `psf/requests` tasks,
-12 delivered patches, 1 resolved). Harness2 offers the missing method - improve a
-harness from execution contrast without a grade - but it needs a benchmark
-adapter, and the question is whether our seams support one.
+12 patch files, 11 submitted, 1 resolved). Harness2 offers the missing method -
+improve a harness from execution contrast without a grade - but it needs a
+benchmark adapter, and the question is whether our seams support one.
 
 Two premises of the original framing were checkable in this repository and are
 corrected here instead of being left to the implementer: a single-task runner
@@ -46,8 +46,11 @@ already derives it: `render_models_yaml` / `write_models_yaml`
 (`scripts/host-trial/run_host_trial.py` L361-L387) map **every** `model:` alias
 the submission declares to `openai/<HARNESS_MODEL>`. `--models-yaml` is optional
 on the CLI (`swegemma/cli.py` L84-L89) but required in practice: without it
-`setup_gemma_model_registry` builds the default registry and a submission alias
-fails to resolve at compile time.
+`setup_gemma_model_registry` builds the default registry, which resolves the
+submission's `gemma-4-31b-it-qat-w4a16-ct` alias to
+`openai/gemma-4-31b-it-qat-w4a16-ct` (`swegemma/models/registry.py` L116) instead
+of the trial substitute, so the rollout targets a model the local backend does
+not serve.
 
 Generated rather than passed: `--models-yaml`. The three angle-bracket
 placeholders in the other lines (`<tree>`, `<id>`, `<dir>`) are the adapter's own
@@ -65,9 +68,11 @@ directory or a package layout:
 - `adk_submission/discovery.py` L89 resolves whatever path it is given
   (`root = Path(submission_dir).resolve()`) and L91-L94 rejects only a path that
   is not a directory.
-- The single consumer is `compile_submission(submission_dir=config.submission_dir,
-  ...)` at `swegemma/harness/agent_runner.py` L334-L335, inside
-  `run_agent_sandbox` (L193).
+- The compile path consumes it at
+  `compile_submission(submission_dir=config.submission_dir, ...)` in
+  `swegemma/harness/agent_runner.py` L334-L335, inside `run_agent_sandbox`
+  (L193); `harness/container_setup.py` L35-L37 also reads it, but only to locate
+  the optional `setup.py`, which is copied at L535 and never mounted as the tree.
 
 Consequently **neither a `--submission-dir` flag on
 `scripts/host-trial/run_host_trial.py` nor an adapter-local reimplementation of
@@ -81,8 +86,9 @@ cannot drift between the runner and the adapter. `build_eval_args` - not
 
 ### (b) What is validated before the container starts?
 
-`compile_submission` (`adk_submission/compiler.py` L119-L130) calls
-`validate_directory` first, then loads and validates the root YAML:
+`compile_submission` (`adk_submission/compiler.py` L124-L130) calls
+`validate_directory` first, then loads the root YAML and validates it against the
+schema (L134-L138):
 
 1. `submission_dir` must be a directory (`discovery.py` L91-L94).
 2. A recursive scan rejects any symlink (`discovery.py` L101-L105).
@@ -94,7 +100,7 @@ cannot drift between the runner and the adapter. `build_eval_args` - not
    at most 50 MiB (`discovery.py` L135-L157).
 6. A root config must be found: `agent.yaml`, else `root_agent.yaml`, else the
    single root-level YAML; zero root YAMLs and two-plus unnamed root YAMLs both
-   raise (`discovery.py` L171-L253, `_ROOT_CONFIG_NAMES` at L24). So
+   raise (`discovery.py` L180-L251, `_ROOT_CONFIG_NAMES` at L24). So
    `agent.yaml` is **preferred by name but not required by name**.
 7. The root YAML is loaded with sandboxed `!include`, then validated against a
    `extra="forbid"` Pydantic schema (`compiler.py` L132-L143,
@@ -102,8 +108,9 @@ cannot drift between the runner and the adapter. `build_eval_args` - not
    callback, skill and adapter reference must resolve in a closed registry.
 
 The **single-declared-model** contract is *not* enforced on this path.
-`swegemma/models/discovery.py` L93 defines `validate_single_declared_model` and
-`swegemma/models/__init__.py` L25 exports it, but no code in `swegemma` calls it;
+`swegemma/models/discovery.py` L93 defines `validate_single_declared_model`;
+`swegemma/models/__init__.py` imports it at L7 and re-exports it at L32, but no
+code in `swegemma` calls it;
 the `eval` path checks that each alias resolves in the registry, not how many
 models the submission declares. A `validate_tree` that relies on the harness for
 that check would be wrong.
