@@ -26,7 +26,7 @@ on purpose for outreach. Nothing else in the repository is exempt.
 `docs/README.md` is the single entry point and the document index. It is
 updated in the same PR that adds or moves any document.
 
-Every document belongs to one of five genres:
+Every document belongs to one of six genres:
 
 - **living reference** — stable name, no date in the name, updated in place
   (`docs/`). Status `current`.
@@ -36,6 +36,10 @@ Every document belongs to one of five genres:
 - **task digest** — regenerable from `data/raw/tasks.jsonl` (`docs/tasks/`);
   regenerate instead of hand-editing.
 - **proposal** — dated, superseded but never deleted (`docs/proposals/`).
+- **experience library** — append-only entries keyed by the situation that
+  triggers the lesson, browsable through one index (`docs/harness-library/`).
+  Status `current`; a superseded entry is never rewritten, it gains
+  `Status: superseded-by <path>`.
 - **journal** — append-only change log; one human file per UTC day
   (`docs/journal/YYYYMMDD.md`) rendered from the machine file
   `docs/journal/events.jsonl`. See `## Change journal` below.

@@ -15,6 +15,7 @@ from which raw artifact it was derived.
 | proposal | `docs/proposals/` | Dated, superseded but never deleted. Status is `open`, `accepted`, `superseded-by <path>` or `implemented in PR #N`. |
 | journal | `docs/journal/` | Append-only change log: one human file per UTC day, rendered from the machine file `events.jsonl`; never rewritten. Revise by adding a superseding or reverting entry. |
 | change tracker | `odd/tasks/` | Per-feature tracker; goal, decisions, checkboxed tasks and evidence. Never deleted. |
+| experience library | `docs/harness-library/` | Append-only entries; the index is edited in place. Status is `current` or `superseded-by <path>`. |
 
 ## Header rule
 
@@ -24,7 +25,7 @@ document itself; do not invent them.
 ```text
 ---
 Date: <YYYY-MM-DD>
-Genre: run analysis | task digest | proposal | living reference | journal
+Genre: run analysis | task digest | proposal | living reference | journal | experience library
 Status: current | superseded-by <path> | archived
 Scope: <one line: what it covers and what it does not>
 Source of truth: <the raw paths it was derived from, plus the read date>
@@ -76,6 +77,7 @@ to a change carries none.
 | [competitive-options-playbook.md](competitive-options-playbook.md) | living reference | current | Working playbook of levers to raise Resolution Rate, conditioned by the sandbox constraints. | — | submission/, scripts/host-trial/, docs/, odd/tasks/ (read 2026-10-06) | 2026-10-06 |
 | [harness-logging-contract.md](harness-logging-contract.md) | living reference | current | What the swegemma harness logs per task and what is required to run a local trial. | — | data/raw/HARNESS_README.md, data/raw/tasks.jsonl, data/raw/docker/ (read 2026-10-06) | 2026-09-30 |
 | [harness-improvement-protocol.md](harness-improvement-protocol.md) | living reference | current | The protocol a harness change follows: INV/DOM dimensions, evidence citation, KEEP_BASE, one retry, the score-free brief and the composition step. | — | runs/20261009T122847Z/, docs/proposals/20261006-prompt-hardening.md, odd/tasks/88-delivery-record.md, harness2 upstream (read 2026-10-26) | 2026-10-26 |
+| [harness-library/INDEX.md](harness-library/INDEX.md) | experience library | current | Browsable index of cue-keyed lessons, each carrying the harness identity it was learned under. | — | docs/harness-library/, runs/20261009T122847Z/manifest.json (read 2026-10-26) | 2026-10-26 |
 | [host-trial-runbook.md](host-trial-runbook.md) | living reference | current | Operator runbook to run a real swegemma trial on Windows/Docker or Linux/WSL2. | — | scripts/host-trial/run_host_trial.py and the harness contract (read 2026-10-06) | 2026-10-25 |
 | [run-reports.md](run-reports.md) | living reference | current | Handoff contract for file-based run reports: runs/ layout, report.json schema, STATUS polling, delivery record, manifest provenance. | — | src/kaggle_gemma_agent/harness_runs.py, run_report.py (read 2026-10-25) | 2026-10-25 |
 | [run-analysis-vocabulary.md](run-analysis-vocabulary.md) | living reference | current | The four verdicts used by every run analysis and proposal, the execution-contrast rule and the claim-record format. | — | AGENTS.md § Change journal, harness2 prompts.py, runs/20261009T122847Z/, runs/20261008T025904Z/ (read 2026-10-26) | 2026-10-26 |

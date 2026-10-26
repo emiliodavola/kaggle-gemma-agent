@@ -57,6 +57,7 @@ artifact sizes, `sandbox_deps_mode`, and a `provenance` block.
 | `prompt` | `sha256` of `submission/prompts/system.md`. |
 | `sampling` | `sha256` of `submission/configs/sampling.yaml`. |
 | `eval_config` | `sha256` of `submission/eval_config.yaml`. |
+| `skills` | `sha256` over the canonical concatenation of `submission/skills/**` (see "Skills hash"); `null` when the directory is absent. |
 | `repo_commit` | HEAD sha, suffixed `-dirty` when the worktree is dirty. |
 
 Any key is `null` when its input is missing. Re-archiving an old run hashes the
@@ -65,6 +66,30 @@ would attach hashes that do not describe it. This mirrors the same caveat the
 journal documents (`docs/journal/README.md`, "Run provenance and re-reporting"):
 the authoritative hashes are the ones captured before the agent started, and an
 old run should not be re-archived to manufacture provenance.
+
+### Skills hash
+
+`skills` is the one key that covers a tree, not a file, because twelve `SKILL.md`
+files plus their companions can change while the four single-file hashes stay
+identical. The canonical byte stream is:
+
+1. Every file under `submission/skills/`, recursively, in ascending order of its
+   POSIX-style relative path **byte value**.
+2. For each file: the POSIX relative path encoded UTF-8, then `b"\x00"`, then the
+   file's raw bytes, then `b"\x00"`, all fed to one `hashlib.sha256()`.
+3. Path separators are normalised to `/`, so a Windows and a Linux checkout of
+   the same bytes produce the same digest. The stream is byte-sensitive and
+   decode-free.
+4. Directories named `__pycache__` and files whose name ends `.pyc` are skipped;
+   nothing else is.
+
+`null` only when `submission/skills` is not a directory, exactly like the other
+keys. Manifests archived before this key existed carry no `skills` entry at all:
+they are never re-archived to add one, and an index or library entry that cites
+such a run states `skills: none (manifest predates the skills hash)` instead of
+inventing a digest. The runner's `run_started` journal event gains the key with no
+change in `scripts/host-trial/run_host_trial.py`, because it passes the whole
+`provenance_hashes()` mapping through.
 
 ## 2. `report.json` (schema `1.0`)
 

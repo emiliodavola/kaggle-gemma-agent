@@ -100,8 +100,42 @@ def test_archive_run_records_provenance_in_manifest(tmp_path: Path) -> None:
     )
 
     manifest = json.loads((run_dir / harness_runs.MANIFEST).read_text(encoding="utf-8"))
-    assert set(manifest["provenance"]) == {"prompt", "sampling", "eval_config", "repo_commit"}
+    assert set(manifest["provenance"]) == {
+        "prompt",
+        "sampling",
+        "eval_config",
+        "skills",
+        "repo_commit",
+    }
     assert all(value is None for value in manifest["provenance"].values())
+
+
+def test_provenance_skills_hash_is_order_independent_and_byte_sensitive(tmp_path: Path) -> None:
+    skills = tmp_path / "submission" / "skills"
+    assert harness_runs.provenance_hashes(repo_root=tmp_path)["skills"] is None
+
+    (skills / "alpha").mkdir(parents=True)
+    (skills / "beta").mkdir()
+    (skills / "alpha" / "SKILL.md").write_text("alpha body\n", encoding="utf-8")
+    (skills / "beta" / "SKILL.md").write_text("beta body\n", encoding="utf-8")
+    forward = harness_runs.provenance_hashes(repo_root=tmp_path)["skills"]
+
+    assert forward is not None
+    assert len(forward) == 64
+    assert set(forward) <= set("0123456789abcdef")
+
+    reverse_root = tmp_path / "reverse"
+    reverse_skills = reverse_root / "submission" / "skills"
+    (reverse_skills / "beta").mkdir(parents=True)
+    (reverse_skills / "alpha").mkdir()
+    (reverse_skills / "beta" / "SKILL.md").write_text("beta body\n", encoding="utf-8")
+    (reverse_skills / "alpha" / "SKILL.md").write_text("alpha body\n", encoding="utf-8")
+    assert harness_runs.provenance_hashes(repo_root=reverse_root)["skills"] == forward
+
+    (skills / "alpha" / "SKILL.md").write_text("alpHa body\n", encoding="utf-8")
+    changed = harness_runs.provenance_hashes(repo_root=tmp_path)["skills"]
+    assert changed is not None
+    assert changed != forward
 
 
 def test_archive_run_folds_in_junit_xml(tmp_path: Path) -> None:
@@ -353,6 +387,7 @@ def test_emit_run_finished_uses_null_for_missing_files(tmp_path: Path) -> None:
         "prompt": None,
         "sampling": None,
         "eval_config": None,
+        "skills": None,
         "repo_commit": None,
     }
 
