@@ -21,23 +21,26 @@ package, stop. Only the configuration cell is edited for a normal run.
 failing gate stops the run. The model alias is read from `submission/agent.yaml`,
 never hard-coded.
 
-**S3 — Scoring-parity serving.** The local backend starts vLLM through
-`adk_submission.server.spawn_vllm_server` with the scoring flags
-(`tool_call_parser=gemma4`, `reasoning_parser=gemma4`,
-`default_chat_template_kwargs={"enable_thinking": True}`, `max_model_len=32768`,
-`gpu_memory_utilization=0.80`, `tensor_parallel_size` = visible GPUs) plus
-`--served-model-name`, and writes a `models.yaml` that maps the declared alias to
-that served id.
+**S3 — Scoring-parity serving.** The local backend starts `VllmServer` with the
+scoring flags (`tool_call_parser=gemma4`, `reasoning_parser=gemma4`,
+`max_model_len=32768`, `gpu_memory_utilization=0.80`, `tensor_parallel_size` = 4/2/1
+by visible GPUs, bfloat16 when supported) and registers the alias declared in
+`agent.yaml` through `create_model_registry(..., model_prefix="openai/")`. The four
+competition models are accepted; the 12B variant adds the official
+`--hf-overrides` JSON. Adapters under `submission/adapters/` are discovered and
+passed to both the server and the evaluator.
 
-**S4 — Docker-less evaluation.** The notebook runs `python -m swegemma eval` with
-`--sandbox subprocess`, a bounded selection (`SUBSET`/`TASK_IDS`, `MAX_TASKS = 2` by
-default), the competition caps (100 tool calls, 500 turns, 300 s per command) and a
-configurable `--max-time-minutes` (default 30).
+**S4 — Docker-less evaluation.** The notebook drives `Evaluator` (the official
+entry point) with `EvalConfig(sandbox="subprocess")`, a bounded selection
+(`SUBSET`/`TASK_IDS`, `MAX_TASKS = 2` by default), the context-cache and
+compaction objects the official notebook uses, and budgets read from
+`submission/eval_config.yaml` with optional notebook overrides
+(`MAX_TIME_MINUTES = 30` is the only default override).
 
 **S5 — Same handoff.** After the evaluation the notebook archives with
 `python -m kaggle_gemma_agent.harness_runs archive --no-journal` and writes one
 `<RUN_LABEL>.zip` holding `results/<RUN_LABEL>/`, `artifacts/runs/<UTC>/` and
-`run_meta.json` (repo commit, backend, served model, task ids, budgets, exit code).
+`run_meta.json` (repo commit, backend, model id, task ids, budgets, resolved/total).
 
 **S6 — API fallback.** `MODEL_BACKEND = "api"` reuses `HeaderInjectingProxy` and
 `smoke_test_backend` from `scripts/host-trial/run_host_trial.py`, so the opencode
@@ -51,9 +54,23 @@ command) instead of starting a run on an incomplete set.
 **S8 — Notebook-Python compatibility.** Every module under `src/` and `scripts/`
 parses as Python 3.11 syntax, so the notebook can import
 `scripts/host-trial/run_host_trial.py` and run
-`python -m kaggle_gemma_agent.harness_runs` on the Kaggle image. The three
+`python -m kaggle_gemma_agent.harness_runs` on the Kaggle image. The four
 PEP 758 `except A, B:` sites use parentheses; `tests/test_python_compat.py` pins
 the contract.
+
+**S9 — Official-reference alignment.** The notebook adopts the official Getting
+Started notebook's exact data path
+(`/kaggle/input/competitions/gemma-4-developer-agent`), wheelhouse install
+(cutlass `.pth` cleanup, `+cu128` filename restore, `--no-deps --force-reinstall`
+of every wheel), vLLM/Transformers/LiteLLM environment switches, allowed-model
+list with the 12B `--hf-overrides`, budgets from `eval_config.yaml`, and the
+`Evaluator` API with `ContextCacheConfig` / `EventsCompactionConfig`.
+
+**S10 — Version-guarded optional fields.** The official notebook passes
+`verification_timeout_seconds` to `EvalConfig` and `scheduler_reserve_full_isl` to
+`VllmConfig`; the pinned `swegemma 0.2.7` wheelhouse has neither. The notebook
+filters optional fields through the installed dataclass, prints the ignored names
+and continues, so the same file works on 0.2.7 and on a newer wheelhouse.
 
 ## Tasks
 
@@ -64,12 +81,15 @@ the contract.
       (works for a branch, tag or sha) and the submission gate. Evidence: gate
       printed `submission contract OK (6/6 points)`, `harness surface OK (3 checks)`,
       `answer leak OK (4 patterns)` against a real clone.
-- [x] T3 (S3) — vLLM start through `adk_submission.server` and the generated
-      `models.yaml`. Evidence: flags read from `adk_submission/server.py` and
-      `data/raw/HARNESS_README.md` §3.1.
-- [x] T4 (S4, S5) — `swegemma eval --sandbox subprocess` and the archive/package
-      cells. Evidence: arguments cross-checked against `swegemma/cli.py` and
-      `harness_runs.py` from the shipped wheels.
+- [x] T3 (S3) — vLLM start through `VllmServer` and the alias registry. Evidence:
+      flags cross-checked against `adk_submission/server.py` and the official
+      getting-started notebook; `scheduler_reserve_full_isl` filtered because 0.2.11
+      has no such field.
+- [x] T4 (S4, S5) — `Evaluator` + `EvalConfig(sandbox="subprocess")` and the
+      archive/package cells. Evidence: fields cross-checked against
+      `swegemma/config.py`, `swegemma/evaluate.py` and `harness_runs.py` from the
+      shipped wheels; `verification_timeout_seconds` filtered because 0.2.11 has no
+      such field.
 - [x] T5 (S6) — API fallback reusing the host-trial proxy and smoke probe.
       Evidence: imports resolved from `scripts/host-trial/run_host_trial.py`.
 - [x] T6 — Documentation: `docs/kaggle-remote-run.md`, indexed in `docs/README.md`.
@@ -78,6 +98,11 @@ the contract.
       `run_report.py`, `run_host_trial.py` and `trace_metrics.py` (four PEP 758
       sites) before the fix and `incompatible files: 0` after it;
       `uv run pytest tests/test_python_compat.py -q` → `13 passed`.
+- [x] T9 (S9, S10) — Alignment with the official getting-started notebook after
+      the user supplied it for comparison. Evidence: exact data/model paths, the
+      wheelhouse install block, the environment switches, the four-model list with
+      the 12B overrides, budgets read from `eval_config.yaml`, the `Evaluator` API
+      with context cache/compaction, and the guarded optional fields.
 - [ ] T8 — First remote run on Kaggle (L4 x4, internet on, three inputs attached).
       Evidence to record: the notebook's `STATUS` block, the zip path, and the
       per-task `error` values. This task stays open until the run exists.
@@ -112,3 +137,20 @@ Kaggle notebook image. The notebook imports the runner for the header proxy and 
 smoke probe, and runs the archiver, so those modules had to parse on 3.11. The four
 sites now use parentheses (same behavior) and `tests/test_python_compat.py` pins the
 contract. This is a portability fix, not a behavior change.
+
+**L6 — Comparison with the two reference notebooks.** The official Getting Started
+notebook showed six gaps in the first proposal: the data mount is
+`/kaggle/input/competitions/gemma-4-developer-agent`; the model lives under
+`.../google/gemma-4/other/<model>/<version>`; the wheelhouse is installed with
+`--no-deps --force-reinstall` after cutlass cleanup and `+cu128` restore; the
+image needs the vLLM/Transformers/LiteLLM/OTEL switches; four models are allowed and
+the 12B needs `--hf-overrides`; and the official entry point is `Evaluator` with
+context cache/compaction, not the CLI. The notebook now follows that path, with the
+two fields the pinned 0.2.11 wheelhouse lacks (`verification_timeout_seconds`,
+`scheduler_reserve_full_isl`) filtered at runtime. The small-model leaderboard
+notebook confirmed the 12B/E4B/E2B track and the same data layout.
+
+`ruff format notebooks/` accidentally reformatted both reference notebooks while the
+new notebook was being formatted. They are Kaggle inputs, not repository artifacts:
+they were restored from the captured original sources (cell counts match), their
+leaderboard outputs were preserved, and `.gitignore` now keeps both out of commits.
