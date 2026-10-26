@@ -44,7 +44,8 @@ Attach three inputs (Add Input):
 |-------|-----|-------|
 | Competition data `gemma-4-developer-agent` | `tasks.jsonl`, `snapshots/`, `wheels/`, `graphs/`, `embeddings/`, `sandbox/setup.py` | `/kaggle/input/competitions/gemma-4-developer-agent/` |
 | Dataset `metric/gemma-4-developer-agent-wheelhouse` | `swegemma`, `adk-submission`, `adk-eval-core`, vLLM and their pinned dependencies | `/kaggle/input/datasets/metric/gemma-4-developer-agent-wheelhouse/` |
-| Model `google/gemma-4/...` | the competition checkpoint | `/kaggle/input/models/google/gemma-4/other/<model>/<version>/` |
+| Model `google/gemma-4/...` | the competition checkpoint | `/kaggle/input/models/google/gemma-4/Other/<model>/<version>/` |
+| Dataset `bistiarj/kaggle-gemma-agent-code` | `submission/`, `src/`, `experiments/` and `COMMIT` for offline runs | `/kaggle/input/kaggle-gemma-agent-code/` |
 
 The notebook auto-detects the data root (the explicit competition path first, then
 any `/kaggle/input` directory holding `tasks.jsonl` next to `snapshots/` or
@@ -57,6 +58,20 @@ The full competition data is 20.9 GiB. If that is too large for the session, pub
 a small dataset with `tasks.jsonl`, `wheels/`, `sandbox/`, `graphs/`, `embeddings/`
 and only the `snapshots/<instance_id>.tgz` files you intend to run; the notebook
 validates the selected tasks and names any missing snapshot.
+
+## Offline on L4 (required)
+
+The competition's **Upgraded Accelerators** page states: *"No Internet - All L4
+sessions must have internet disabled."* The notebook probes GitHub once:
+
+- **Online** (CPU/T4 or a local host): it clones `REPO_URL` at `REPO_REF`.
+- **Offline** (L4): it looks for an attached dataset holding `submission/` and
+  `src/` (for example `bistiarj/kaggle-gemma-agent-code`) and uses it as the
+  repository root; the dataset's `COMMIT` file records the commit.
+
+The wheelhouse install, the evaluation and the archive are all offline. The only
+online-only fallback is the PyPI fill for a genuinely missing runtime dependency;
+offline it prints a warning instead.
 
 ## Session settings
 
