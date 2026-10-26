@@ -1,6 +1,6 @@
 """Every shipped module must parse on the Kaggle notebook image's Python.
 
-The repository targets Python 3.14, but ``notebooks/kaggle_remote_run.ipynb``
+The repository targets Python 3.14, but ``notebooks/kaggle_run.ipynb``
 imports ``scripts/host-trial/run_host_trial.py`` and runs
 ``python -m kaggle_gemma_agent.harness_runs`` on the Kaggle notebook image, whose
 interpreter can be older. Syntax newer than 3.11 breaks the remote run before the

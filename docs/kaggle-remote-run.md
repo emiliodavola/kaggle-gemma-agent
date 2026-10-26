@@ -3,13 +3,13 @@ Date: 2026-10-26
 Genre: living reference
 Status: current
 Scope: The Kaggle notebook that runs the tuned `submission/` tree remotely: inputs, accelerator, wheelhouse install, vLLM serving, evaluation, artifacts and known limits. It does not cover the host trial (`docs/host-trial-runbook.md`) or the scored submission contract.
-Source of truth: `notebooks/kaggle_remote_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), `data/raw/HARNESS_README.md`, `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py` (read 2026-10-26)
+Source of truth: `notebooks/kaggle_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), `data/raw/HARNESS_README.md`, `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py` (read 2026-10-26)
 Limits: The notebook has not been executed on Kaggle yet; its first run is the verification. Kaggle session limits, accelerator availability and the exact model mount are platform facts, not repository facts.
 ---
 
 # Kaggle remote run
 
-`notebooks/kaggle_remote_run.ipynb` is the first **remote** execution path for the
+`notebooks/kaggle_run.ipynb` is the first **remote** execution path for the
 harness we tune locally. It follows the official **Getting Started: Gemma 4
 Developer Agent** notebook: installs the competition wheelhouse, loads the
 competition data from `/kaggle/input/competitions/gemma-4-developer-agent`, serves
@@ -142,7 +142,7 @@ wheelhouse it passes them through.
 
 ## Running it
 
-Upload `notebooks/kaggle_remote_run.ipynb` through **Create → Notebook → File →
+Upload `notebooks/kaggle_run.ipynb` through **Create → Notebook → File →
 Import Notebook**, set the accelerator and internet switches, attach the three
 inputs, then **Run all**.
 
@@ -153,7 +153,7 @@ the notebook and copy the exact source slugs from the Add Input dialog:
 {
   "id": "<kaggle-user>/kaggle-remote-run",
   "title": "kaggle-remote-run",
-  "code_file": "kaggle_remote_run.ipynb",
+  "code_file": "kaggle_run.ipynb",
   "language": "python",
   "kernel_type": "notebook",
   "is_private": true,
