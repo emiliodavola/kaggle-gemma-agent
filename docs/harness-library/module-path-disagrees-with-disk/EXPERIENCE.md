@@ -33,3 +33,6 @@ prompt: 960ec773f9b1394f3238e8ad2827e86f05aed3e8c57dde392a0cf523129af8ee
 skills: none (manifest predates the skills hash)
 repo_commit: 337b85773f47a203a903086ab43d104eb5ed3ef9-dirty
 ```
+
+The run id is the manifest's `created_at` value and the run directory name; the
+manifest carries no separate `run` field.
