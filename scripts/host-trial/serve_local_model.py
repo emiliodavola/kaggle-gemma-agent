@@ -37,9 +37,15 @@ Values are read from ``<repo root>/.env`` first and then the process environment
 ``HARNESS_TRIAL_GPU_LAYERS`` llama.cpp ``-ngl`` value (default ``all``)
 ``HARNESS_TRIAL_SERVER_HOST`` default ``127.0.0.1``
 ``HARNESS_TRIAL_SERVER_PORT`` default ``1234`` (lmstudio) / ``8080`` (llamacpp)
-``HARNESS_TRIAL_LMS_BIN``    LM Studio CLI name (default ``lms``)
-``HARNESS_TRIAL_LLAMACPP_BIN`` llama.cpp server name (default ``llama-server``)
+``HARNESS_TRIAL_LMS_BIN``    LM Studio CLI name or full path (default ``lms``)
+``HARNESS_TRIAL_LLAMACPP_BIN`` llama.cpp server name or full path (default ``llama-server``)
 ``HARNESS_MODEL``            served id the runner expects (default gemma alias)
+
+A bare binary name is resolved with ``shutil.which`` and, when that misses, against
+the standard LM Studio install location, because WSL fixes ``PATH`` when a shell
+starts: a shell opened before LM Studio added itself stays blind to ``lms.exe``.
+A binary that cannot be resolved raises a :class:`LauncherError` naming the env var
+above, never a raw ``FileNotFoundError``.
 """
 
 from __future__ import annotations
@@ -47,6 +53,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -59,6 +66,7 @@ DEFAULT_CONTEXT = 26214
 DEFAULT_MODEL_ID = "gemma-4-31b-it-qat"
 DEFAULT_LLAMACPP_PORT = 8080
 DEFAULT_LMSTUDIO_PORT = 1234
+WSL_WINDOWS_USERS_ROOT = Path("/mnt/c/Users")
 BACKEND_PORTS = {"lmstudio": DEFAULT_LMSTUDIO_PORT, "llamacpp": DEFAULT_LLAMACPP_PORT}
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
@@ -84,6 +92,104 @@ def windows_executable(name: str, *, on_wsl: bool) -> str:
     if on_wsl and not name.lower().endswith(".exe"):
         return f"{name}.exe"
     return name
+
+
+def fallback_binary_paths(
+    binary_name: str,
+    *,
+    on_wsl: bool,
+    wsl_users_root: Path | None = None,
+    home: Path | None = None,
+) -> list[Path]:
+    """Return known install locations for *binary_name*, empty when unknown.
+
+    LM Studio ships ``lms.exe`` under ``%USERPROFILE%\\.lmstudio\\bin`` and adds
+    that directory to the Windows user ``PATH``. WSL derives ``PATH`` when a shell
+    starts, so a shell opened before that install keeps the stale value and cannot
+    resolve ``lms.exe`` by name; its install location is tried instead.
+    """
+    if Path(binary_name).name.lower() != "lms.exe":
+        return []
+    if on_wsl:
+        root = Path(wsl_users_root) if wsl_users_root is not None else WSL_WINDOWS_USERS_ROOT
+        return sorted(root.glob("*/.lmstudio/bin/lms.exe"))
+    home_dir = Path(home) if home is not None else Path.home()
+    return [home_dir / ".lmstudio" / "bin" / "lms.exe"]
+
+
+def _is_explicit_path(candidate: str) -> bool:
+    """Return whether *candidate* names a path instead of a bare command name."""
+    return "/" in candidate or "\\" in candidate or Path(candidate).is_absolute()
+
+
+def _missing_binary_message(
+    candidate: str, env_var: str, *, tried: Sequence[Path], on_wsl: bool
+) -> str:
+    """Build the actionable error raised when the binary cannot be resolved."""
+    message = f"cannot run {candidate!r}: not found on PATH"
+    if tried:
+        message += " or at " + ", ".join(str(path) for path in tried)
+    if on_wsl:
+        message += (
+            "; WSL builds PATH when the shell starts, so a shell opened before the "
+            "install does not see it"
+        )
+    return f"{message}. Set {env_var} to the full path and retry."
+
+
+def resolve_binary(
+    name: str,
+    *,
+    on_wsl: bool,
+    env_var: str,
+    which: Callable[[str], str | None] | None = None,
+    fallbacks: Sequence[Path] | None = None,
+    required: bool = True,
+) -> str:
+    """Return a runnable path for *name*, or raise :class:`LauncherError`.
+
+    Resolution order: an explicit path is validated as given, otherwise the name
+    goes through ``PATH`` with the ``.exe`` suffix WSL interop needs, otherwise
+    the standard install locations are tried. Every failure names *env_var* so the
+    operator has an escape hatch instead of a bare :class:`FileNotFoundError`.
+
+    ``required=False`` keeps a ``--dry-run`` preview usable before the server is
+    installed: it returns *name* unchanged instead of raising.
+    """
+    candidate = windows_executable(name, on_wsl=on_wsl)
+    if _is_explicit_path(candidate):
+        path = Path(candidate)
+        if path.is_file():
+            return str(path)
+        if not required:
+            return candidate
+        raise LauncherError(
+            f"{candidate!r} does not exist. Fix {env_var}, or unset it to search PATH."
+        )
+
+    finder = which or shutil.which
+    if finder(candidate):
+        # Keep the bare name: PATH already resolves it, so the printed commands and
+        # the argv stay exactly what they were before this resolution step existed.
+        return candidate
+
+    locations = (
+        list(fallbacks)
+        if fallbacks is not None
+        else fallback_binary_paths(candidate, on_wsl=on_wsl)
+    )
+    existing = [path for path in locations if path.is_file()]
+    if len(existing) == 1:
+        return str(existing[0])
+    if len(existing) > 1:
+        listed = ", ".join(str(path) for path in existing)
+        raise LauncherError(
+            f"ambiguous {candidate}: found {len(existing)} candidates ({listed}). "
+            f"Set {env_var} to the one to use."
+        )
+    if not required:
+        return candidate
+    raise LauncherError(_missing_binary_message(candidate, env_var, tried=locations, on_wsl=on_wsl))
 
 
 def parse_env_file(text: str) -> dict[str, str]:
@@ -286,9 +392,15 @@ def launch_detached(command: Sequence[str], *, on_wsl: bool) -> None:
     if on_wsl:
         quoted = ",".join(f"'{arg}'" for arg in command)
         ps = f"Start-Process -FilePath '{command[0]}' -ArgumentList {quoted}"
-        subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], check=True)
+        try:
+            subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], check=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise LauncherError(f"cannot launch {command[0]!r}: {exc}") from exc
     else:
-        subprocess.Popen(list(command))
+        try:
+            subprocess.Popen(list(command))
+        except OSError as exc:
+            raise LauncherError(f"cannot launch {command[0]!r}: {exc}") from exc
 
 
 def _print_command(command: Sequence[str]) -> None:
@@ -297,7 +409,10 @@ def _print_command(command: Sequence[str]) -> None:
 
 def _run(command: Sequence[str]) -> None:
     _print_command(command)
-    result = subprocess.run(list(command), check=False)
+    try:
+        result = subprocess.run(list(command), check=False)
+    except OSError as exc:
+        raise LauncherError(f"cannot execute {command[0]!r}: {exc}") from exc
     if result.returncode != 0:
         raise LauncherError(f"command failed (exit {result.returncode}): {command[0]}")
 
@@ -314,7 +429,12 @@ def start(args: argparse.Namespace, env: Mapping[str, str]) -> int:
 
     print(f"launch backend={backend} context={context} served_id={served_id} ({host}:{port})")
     if backend == "lmstudio":
-        binary = windows_executable(env.get("HARNESS_TRIAL_LMS_BIN", "lms"), on_wsl=on_wsl)
+        binary = resolve_binary(
+            env.get("HARNESS_TRIAL_LMS_BIN", "lms"),
+            on_wsl=on_wsl,
+            env_var="HARNESS_TRIAL_LMS_BIN",
+            required=not args.dry_run,
+        )
         model_key = env.get("HARNESS_TRIAL_MODEL_KEY", served_id)
         commands = [
             build_lms_server_command(binary=binary),
@@ -330,8 +450,11 @@ def start(args: argparse.Namespace, env: Mapping[str, str]) -> int:
         model_path = env.get("HARNESS_TRIAL_MODEL_PATH", "").strip()
         if not model_path:
             raise LauncherError("HARNESS_TRIAL_MODEL_PATH is required for llamacpp")
-        binary = windows_executable(
-            env.get("HARNESS_TRIAL_LLAMACPP_BIN", "llama-server"), on_wsl=on_wsl
+        binary = resolve_binary(
+            env.get("HARNESS_TRIAL_LLAMACPP_BIN", "llama-server"),
+            on_wsl=on_wsl,
+            env_var="HARNESS_TRIAL_LLAMACPP_BIN",
+            required=not args.dry_run,
         )
         commands = [
             build_llamacpp_command(
@@ -345,9 +468,9 @@ def start(args: argparse.Namespace, env: Mapping[str, str]) -> int:
             )
         ]
 
-    for command in commands:
-        _print_command(command)
     if args.dry_run:
+        for command in commands:
+            _print_command(command)
         print("dry-run: not executing")
         return 0
     if backend == "llamacpp":
@@ -368,7 +491,11 @@ def stop(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     except LauncherError:
         backend = "lmstudio"
     if backend == "lmstudio":
-        binary = windows_executable(env.get("HARNESS_TRIAL_LMS_BIN", "lms"), on_wsl=on_wsl)
+        binary = resolve_binary(
+            env.get("HARNESS_TRIAL_LMS_BIN", "lms"),
+            on_wsl=on_wsl,
+            env_var="HARNESS_TRIAL_LMS_BIN",
+        )
         for command in build_lms_stop_commands(binary=binary):
             _run(command)
         return 0

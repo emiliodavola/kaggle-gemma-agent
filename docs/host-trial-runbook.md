@@ -604,6 +604,18 @@ Values are read from `<repo root>/.env` first and then the process environment (
 process env wins), so running the launcher directly behaves like the runner;
 `--env-file <path>` overrides the file location.
 
+A bare binary name is resolved through `PATH` and, when that misses, against the
+standard LM Studio install location (`%USERPROFILE%\.lmstudio\bin\lms.exe`, seen
+from WSL as `/mnt/c/Users/<you>/.lmstudio/bin/lms.exe`). This matters because WSL
+builds `PATH` when a shell starts: a shell opened before LM Studio added its
+directory stays blind to `lms.exe` even though Windows resolves it. If neither
+works, the launcher fails with an error naming `HARNESS_TRIAL_LMS_BIN` and the
+full-path fix instead of a traceback:
+
+```bash
+export HARNESS_TRIAL_LMS_BIN=/mnt/c/Users/<you>/.lmstudio/bin/lms.exe
+```
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
