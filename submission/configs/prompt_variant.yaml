@@ -6,8 +6,8 @@
 # src/kaggle_gemma_agent/prompt_variant.py.
 #
 # A variant either owns its own file or aliases the active prompt; two variant
-# files must never hold identical bytes (enforced by
-# tests/test_prompt_variant.py, issue #90).
+# files must never hold identical bytes (enforced by the prompt-variant
+# tests, issue #90).
 #
 # Allowed values:
 #   legacy -> prompts/system.legacy.md   (prompt shipped before this change)

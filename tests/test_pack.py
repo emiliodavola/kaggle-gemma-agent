@@ -379,6 +379,7 @@ def test_main_check_prints_harness_surface_line(
     assert capsys.readouterr().out.splitlines() == [
         "submission contract OK (6/6 points)",
         "harness surface OK (3 checks)",
+        "answer leak OK (4 patterns)",
     ]
 
 
@@ -410,3 +411,120 @@ def test_harness_surface_size_counts_decoded_chars(tmp_path: Path) -> None:
 
     assert len(violations) == 1
     assert "rule s2" in violations[0]
+
+
+def _write_skill(source: Path, text: str) -> None:
+    (source / pack.STACK_DIR / "skill-00" / pack.SKILL_MANIFEST).write_text(text, encoding="utf-8")
+
+
+def test_answer_leak_passes_on_compliant_source(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    assert pack.check_answer_leak(source) == []
+
+
+def test_answer_leak_flags_task_id(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    _write_skill(source, "# Skill\nrequests_7309\n")
+
+    violations = pack.check_answer_leak(source)
+
+    assert len(violations) == 1
+    assert "skills/skill-00/SKILL.md:2" in violations[0]
+    assert "requests_7309" in violations[0]
+
+
+def test_answer_leak_flags_node_id(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    _write_skill(source, "# Skill\n::test_parse_header\n")
+
+    violations = pack.check_answer_leak(source)
+
+    assert len(violations) == 1
+    assert "::test_" in violations[0]
+    assert "skills/skill-00/SKILL.md:2" in violations[0]
+
+
+def test_answer_leak_flags_test_path(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    _write_skill(source, "# Skill\ntests/test_utils.py\n")
+
+    violations = pack.check_answer_leak(source)
+
+    assert len(violations) == 1
+    assert "tests/test_utils.py" in violations[0]
+
+
+def test_answer_leak_flags_split_marker(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    _write_skill(source, "# Skill\nFAIL_TO_PASS\n")
+
+    violations = pack.check_answer_leak(source)
+
+    assert len(violations) == 1
+    assert "FAIL_TO_PASS" in violations[0]
+
+
+def test_answer_leak_reports_line_and_deduplicates(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    _write_skill(source, "# Skill\nrequests_7309 requests_7309\n")
+
+    violations = pack.check_answer_leak(source)
+
+    task_ids = [violation for violation in violations if "requests_7309" in violation]
+    assert len(task_ids) == 1
+    assert "skills/skill-00/SKILL.md:2" in task_ids[0]
+
+
+def test_answer_leak_scans_file_names(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "requests_7309.md").write_text("clean content\n", encoding="utf-8")
+
+    violations = pack.check_answer_leak(source)
+
+    assert violations == ["requests_7309.md: answer leak in file name 'requests_7309'"]
+
+
+def test_answer_leak_skips_non_text_suffix(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "weights.safetensors").write_bytes(b"requests_7309")
+
+    assert pack.check_answer_leak(source) == []
+
+
+def test_answer_leak_handles_missing_source(tmp_path: Path) -> None:
+    missing = tmp_path / "nope"
+
+    assert pack.check_answer_leak(missing) == [
+        f"{missing}: source directory does not exist (answer leak)"
+    ]
+
+
+def test_answer_leak_passes_on_shipped_submission() -> None:
+    submission = Path(__file__).resolve().parents[1] / "submission"
+
+    assert pack.check_answer_leak(submission) == []
+
+
+def test_main_check_prints_answer_leak_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = _make_compliant_source(tmp_path)
+
+    assert pack.main([str(source), "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "submission contract OK (6/6 points)" in out
+    assert "harness surface OK (3 checks)" in out
+    assert "answer leak OK (4 patterns)" in out
+
+
+def test_main_check_reports_answer_leak_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = _make_compliant_source(tmp_path)
+    _write_skill(source, "# Skill\nrequests_7309\n")
+
+    assert pack.main([str(source), "--check"]) == 1
+    captured = capsys.readouterr()
+    assert "answer leak FAILED" in captured.err
+    assert "submission contract OK (6/6 points)" in captured.out

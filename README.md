@@ -89,7 +89,13 @@ A second, independent layer validates the harness surface: every skill is named
 in the always-on prompt (**s1**), that prompt stays under `MAX_ALWAYS_ON_CHARS`
 (**s2**), and every referenced `scripts/<file>.py` ships in the archive
 (**s3**). It prints `harness surface OK (3 checks)` next to the unchanged
-`6/6` line, and `--check` fails if either layer fails.
+`6/6` line, and `--check` fails if any of the three layers fails.
+
+A third, independent layer, `check_answer_leak`, rejects shipped content that
+encodes a grader answer: task instance ids, `tests/test_*.py` paths, test node
+ids and `FAIL_TO_PASS` / `PASS_TO_PASS` markers. It prints
+`answer leak OK (4 patterns)` and names the file and, for content matches, the
+line; `--check` fails if any of the three layers fails.
 
 ## Submission overview
 
