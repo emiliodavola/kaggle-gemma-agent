@@ -50,7 +50,7 @@ The notebook auto-detects the data root (the explicit competition path first, th
 any `/kaggle/input` directory holding `tasks.jsonl` next to `snapshots/` or
 `wheels/`), the wheelhouse (a directory with `swegemma-*.whl`, or a published
 `*wheelhouse*.zip`, which it unpacks) and the model path (the `other/`,
-`transformers/` and `Transformers/` families, highest version first).
+`Other/`, `transformers/` and `Transformers/` families, highest version first).
 `DATA_ROOT`, `WHEELHOUSE` and `MODEL_PATH` override the detection.
 
 The full competition data is 20.9 GiB. If that is too large for the session, publish
