@@ -25,8 +25,11 @@ Validation performed before writing the archive:
 ``check_harness_surface`` validates the harness surface next to it (rules s1-s3):
 every shipped skill is named in the always-on prompt, that prompt stays under
 :data:`MAX_ALWAYS_ON_CHARS`, and every ``scripts/<file>.py`` a skill references
-is actually shipped. The two layers are independent: the contract keeps its
-``6/6`` meaning and its messages.
+is actually shipped. ``check_answer_leak`` adds a third, independent layer: no
+shipped file may carry a grader-specific literal such as an instance id, a test
+node id, a ``test_*.py`` path or a ``FAIL_TO_PASS``/``PASS_TO_PASS`` marker. The
+three layers are independent: the contract keeps its ``6/6`` meaning and its
+messages.
 
 ``agent.yaml`` is read from the source root when present, so the shipped
 manifest lives under ``submission/`` instead of being hard-coded here.
@@ -89,6 +92,42 @@ MAX_ALWAYS_ON_CHARS = 24_000
 # mention, an absolute scratch path such as ``/tmp/scripts/x.py``, a nested
 # ``foo/scripts/x.py``, or a module reference never matches.
 SCRIPT_REF = re.compile(r"(?<![\w./-])(?:\./)?scripts/([A-Za-z0-9_.-]+\.py)")
+
+# Answer-leak layer (issue #91): literals that encode a grader target into
+# shipped content. The tuple order is the within-line emission order.
+ANSWER_LEAK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:requests|httpx|fastapi|rich|pydantic|django)_\d{3,}\b"),
+    re.compile(r"::test_"),
+    re.compile(r"\btests?/test_[A-Za-z0-9_]+\.py\b"),
+    re.compile(r"\b(?:FAIL_TO_PASS|PASS_TO_PASS)\b"),
+)
+
+#: Suffixes scanned for leaks; mirrors Harness2 ``_MARKER_SCAN_SUFFIXES`` plus
+#: ``.jsonl``. Everything else (model weights, archives, images) is skipped.
+_LEAK_SCAN_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".md",
+        ".txt",
+        ".json",
+        ".jsonl",
+        ".csv",
+        ".tsv",
+        ".yaml",
+        ".yml",
+        ".html",
+        ".htm",
+        ".log",
+        ".py",
+        ".js",
+        ".sh",
+        ".xml",
+        ".ini",
+        ".toml",
+        ".patch",
+        ".diff",
+        "",
+    }
+)
 
 # Fallback used only when the source tree ships no ``agent.yaml``; the shipped
 # manifest is ``submission/agent.yaml``.
@@ -426,6 +465,51 @@ def check_harness_surface(source_dir: Path) -> list[str]:
     return violations
 
 
+def check_answer_leak(source_dir: Path) -> list[str]:
+    """Reject shipped content that encodes a grader answer (issue #91).
+
+    An empty list means no leak was found. The scan is a literal deny-list over
+    the shipped tree: every :data:`ANSWER_LEAK_PATTERNS` match in a file name is
+    a violation without a line number, and every match in the content of a file
+    whose suffix is in :data:`_LEAK_SCAN_SUFFIXES` is a violation with its
+    1-based line number. Violations are emitted in path order, then file name,
+    then content: line, pattern order, match position. Duplicate matches for the
+    same ``(path, line, literal)`` are reported once.
+
+    This function is read-only and never raises for a missing, unreadable or
+    binary file.
+    """
+    source_dir = Path(source_dir)
+    if not source_dir.is_dir():
+        return [f"{source_dir}: source directory does not exist (answer leak)"]
+    violations: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for path in iter_source_files(source_dir):
+        rel = path.relative_to(source_dir).as_posix()
+        for pattern in ANSWER_LEAK_PATTERNS:
+            for match in pattern.finditer(rel):
+                key = (rel, "name", match.group(0))
+                if key in seen:
+                    continue
+                seen.add(key)
+                violations.append(f"{rel}: answer leak in file name '{match.group(0)}'")
+        if path.suffix.lower() not in _LEAK_SCAN_SUFFIXES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            for pattern in ANSWER_LEAK_PATTERNS:
+                for match in pattern.finditer(line):
+                    key = (rel, str(line_number), match.group(0))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    violations.append(f"{rel}:{line_number}: answer leak '{match.group(0)}'")
+    return violations
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry point for the submission packer."""
     parser = argparse.ArgumentParser(
@@ -437,13 +521,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate the 6-point contract and the harness surface instead of writing an archive",
+        help=(
+            "validate the contract, the harness surface and answer leaks "
+            "instead of writing an archive"
+        ),
     )
     args = parser.parse_args(argv)
 
     if args.check:
         contract = check_submission(args.source)
         surface = check_harness_surface(args.source)
+        leak = check_answer_leak(args.source)
         for violation in contract:
             print(f"error: {violation}", file=sys.stderr)
         if contract:
@@ -462,7 +550,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         else:
             print("harness surface OK (3 checks)")
-        return 1 if contract or surface else 0
+        for violation in leak:
+            print(f"error: {violation}", file=sys.stderr)
+        if leak:
+            print(
+                f"answer leak FAILED ({len(leak)} violation(s))",
+                file=sys.stderr,
+            )
+        else:
+            print(f"answer leak OK ({len(ANSWER_LEAK_PATTERNS)} patterns)")
+        return 1 if contract or surface or leak else 0
 
     try:
         archive = build_submission(args.source, args.output)

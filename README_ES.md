@@ -89,7 +89,14 @@ Una segunda capa, independiente, valida la superficie del harness: cada skill
 está nombrada en el prompt always-on (**s1**), ese prompt queda por debajo de
 `MAX_ALWAYS_ON_CHARS` (**s2**) y cada `scripts/<file>.py` referenciado se envía
 en el archivo (**s3**). Imprime `harness surface OK (3 checks)` junto a la línea
-`6/6` sin cambios, y `--check` falla si falla cualquiera de las dos capas.
+`6/6` sin cambios, y `--check` falla si falla cualquiera de las tres capas.
+
+Una tercera capa, independiente, `check_answer_leak`, rechaza contenido enviado
+que codifique una respuesta del evaluador: ids de instancia de tarea, rutas
+`tests/test_*.py`, node ids de test y marcadores `FAIL_TO_PASS` / `PASS_TO_PASS`.
+Imprime `answer leak OK (4 patterns)`, nombra el archivo y, en las coincidencias
+de contenido, la línea; no cambia los puntos del contrato y `--check` termina con
+error si falla cualquiera de las tres capas.
 
 ## Resumen del submission
 
