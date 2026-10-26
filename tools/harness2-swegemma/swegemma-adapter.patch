@@ -1,0 +1,733 @@
+diff --git a/harness2/benchmarks/swegemma.py b/harness2/benchmarks/swegemma.py
+new file mode 100644
+index 0000000..ea1a241
+--- /dev/null
++++ b/harness2/benchmarks/swegemma.py
+@@ -0,0 +1,556 @@
++# Copyright 2026 Google LLC
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     https://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""swegemma adapter: the kaggle-gemma-agent submission behind the harness2 protocol.
++
++The editable tree is the declarative submission (``agent.yaml``, ``prompts/``,
++``skills/``, ``sub_agents/`` and ``configs/``). A rollout is one
++``swegemma eval --task-ids <id> --submission-dir <tree>`` execution; the raw
++results directory of that single task is the run directory. Delivery is a
++non-empty patch; the score is the harness's own pytest verdict, never a judge
++model.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++from collections.abc import Mapping
++from pathlib import Path
++from typing import Any
++
++from .. import config
++from ..core import runmark as RM
++from ..core import tree as HT
++from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
++from ..substrate.base import Install
++
++REPO = config.SWEGEMMA_ROOT
++TASKS_FILE = REPO / "data" / "raw" / "tasks.jsonl"
++SNAPSHOTS = REPO / "data" / "raw" / "snapshots"
++SUBSETS = REPO / "experiments" / "subsets"
++SUBMISSION = REPO / "submission"
++SWEGEMMA = "swegemma"
++_MODEL_LINE = re.compile(r"^\s*model:\s*['\"]?([^'\"\s]+)['\"]?\s*$")
++_CORPUS: dict[str, dict[str, str]] | None = None
++
++
++class SwegemmaError(RuntimeError):
++    """A rollout or tree check failed in a way the caller must report."""
++
++
++def _load_repo_env() -> None:
++    """Load the repository's git-ignored .env with setdefault; the shell still wins."""
++    path = REPO / ".env"
++    try:
++        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
++    except OSError:
++        return
++    for raw in lines:
++        line = raw.strip()
++        if not line or line.startswith("#") or "=" not in line:
++            continue
++        if line.startswith("export "):
++            line = line[len("export ") :].lstrip()
++        key, _, value = line.partition("=")
++        key = key.strip()
++        value = value.strip()
++        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
++            value = value[1:-1]
++        if key and value:
++            os.environ.setdefault(key, value)
++
++
++def _corpus() -> dict[str, dict[str, str]]:
++    """instance_id -> {repo, problem_statement}, read once from tasks.jsonl."""
++    global _CORPUS
++    if _CORPUS is not None:
++        return _CORPUS
++    if not TASKS_FILE.is_file():
++        raise SwegemmaError(
++            f"task corpus missing at {TASKS_FILE}; run the runbook's data download"
++        )
++    found: dict[str, dict[str, str]] = {}
++    for number, line in enumerate(TASKS_FILE.read_text(encoding="utf-8").splitlines(), 1):
++        if not line.strip():
++            continue
++        record = json.loads(line)
++        instance = record.get("instance_id")
++        if not isinstance(instance, str) or not instance:
++            raise SwegemmaError(f"{TASKS_FILE}:{number}: missing instance_id")
++        found[instance] = {
++            "repo": str(record.get("repo") or "unknown"),
++            "problem_statement": str(record.get("problem_statement") or ""),
++        }
++    _CORPUS = found
++    return found
++
++
++def _subset_path() -> Path:
++    name = config.SWEGEMMA_SUBSET
++    path = Path(name)
++    if path.is_absolute():
++        return path
++    if len(path.parts) > 1:
++        return REPO / path
++    filename = name if name.endswith(".json") else f"{name}.json"
++    return SUBSETS / filename
++
++
++def _subset_ids() -> list[str]:
++    path = _subset_path()
++    try:
++        data = json.loads(path.read_text(encoding="utf-8"))
++    except OSError as exc:
++        raise SwegemmaError(f"cannot read subset {path}: {exc}") from exc
++    ids = data.get("task_ids") if isinstance(data, dict) else None
++    if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
++        raise SwegemmaError(f"{path}: task_ids must be a list of strings")
++    corpus = _corpus()
++    missing = [item for item in ids if item not in corpus]
++    if missing:
++        raise SwegemmaError(f"{path}: ids absent from the corpus: {', '.join(missing)}")
++    return list(ids)
++
++
++def _provider_qualified(model: str) -> str:
++    return model if "/" in model else f"openai/{model}"
++
++
++def _model_aliases(tree: Path) -> list[str]:
++    aliases: list[str] = []
++    for yaml_path in sorted(Path(tree).rglob("*.yaml")):
++        try:
++            lines = yaml_path.read_text(encoding="utf-8", errors="replace").splitlines()
++        except OSError:
++            continue
++        for line in lines:
++            match = _MODEL_LINE.match(line)
++            if match is None:
++                continue
++            alias = match.group(1)
++            if alias and alias not in aliases:
++                aliases.append(alias)
++    return aliases
++
++
++def _write_models_yaml(path: Path, aliases: list[str], model: str) -> Path:
++    target = _provider_qualified(model)
++    lines = [
++        "# GENERATED by harness2 swegemma adapter - do not edit.",
++        "models:",
++    ]
++    for alias in aliases:
++        lines += [
++            f"  {alias}:",
++            f"    path: {target}",
++            f"    display_name: Trial substitute ({target})",
++        ]
++    lines.append("")
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text("\n".join(lines), encoding="utf-8")
++    return path
++
++
++def surface() -> HT.SurfaceSpec:
++    """The declarative submission tree, as an editable surface."""
++    return HT.SurfaceSpec(
++        name="swegemma",
++        always_on=("agent.yaml", "prompts/system.md"),
++        always_on_max=24_000,
++        always_on_cap_reason="the manifest and the always-on prompt are paid on every turn",
++        skill_dir="skills",
++        skill_name_rule="[a-z0-9][a-z0-9-]*",
++        trigger_hint="name the skill in prompts/system.md",
++        autotrigger_file="prompts/system.md",
++        trigger_line="- `{name}`: {desc}",
++        subagent_requires_mode=False,
++        plugin_dir=None,
++        hooks_file=None,
++        compile_skill_scripts=False,
++        reject_empty_always_on=True,
++        extra_globs=(
++            "prompts/*.md",
++            "configs/*.yaml",
++            "eval_config.yaml",
++            "sub_agents/*.yaml",
++        ),
++    )
++
++
++class SwegemmaSubstrate:
++    """The substrate seam: the tree is used in place by the swegemma CLI."""
++
++    name = "sw"
++
++    def surface(self) -> HT.SurfaceSpec:
++        return surface()
++
++    def materialise(self, tree_dir: Path, spec: Any, ctx: Mapping[str, str]) -> Install:
++        tree_dir = Path(tree_dir)
++        return Install(staging_dir=tree_dir, fingerprint=RM.fingerprint(tree_dir), extras={})
++
++    def execute(self, task_ref: str, install: Install, run_ids: list[str], timeout: int) -> list[Path]:
++        raise SwegemmaError("swegemma rollouts run through SwegemmaAdapter.execute, not the substrate")
++
++    def read_trajectory(
++        self, stream_path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int = 400
++    ) -> str:
++        try:
++            text = Path(stream_path).read_text(encoding="utf-8", errors="replace")
++        except OSError:
++            return ""
++        return text[-max_chars:]
++
++    def preflight(self) -> None:
++        _load_repo_env()
++        problems: list[str] = []
++        if not TASKS_FILE.is_file():
++            problems.append(f"task corpus missing: {TASKS_FILE}")
++        if not (SNAPSHOTS.is_dir() and any(SNAPSHOTS.glob("*.tgz"))):
++            problems.append(f"snapshots missing under {SNAPSHOTS}")
++        if not (SUBMISSION / "agent.yaml").is_file():
++            problems.append(f"submission tree missing: {SUBMISSION / 'agent.yaml'}")
++        if not _subset_path().is_file():
++            problems.append(f"subset missing: {_subset_path()}")
++        if not os.environ.get("OPENAI_BASE_URL"):
++            problems.append("OPENAI_BASE_URL is empty; point it at the local backend's /v1")
++        if not os.environ.get("OPENAI_API_KEY"):
++            problems.append("OPENAI_API_KEY is empty; put it in .env or the shell")
++        if not config.SWEGEMMA_MODEL:
++            problems.append("HARNESS_MODEL is empty; set the served model id")
++        for label, cmd in (
++            ("swegemma", [SWEGEMMA, "--help"]),
++            ("docker", ["docker", "info", "--format", "{{.ServerVersion}}"]),
++        ):
++            try:
++                result = subprocess.run(
++                    cmd, capture_output=True, text=True, timeout=60, cwd=REPO
++                )
++            except (OSError, subprocess.SubprocessError) as exc:
++                problems.append(f"{label} is not runnable: {exc}")
++                continue
++            if result.returncode != 0:
++                problems.append(f"{label} exited {result.returncode}: {result.stderr.strip()[-300:]}")
++        if problems:
++            raise SwegemmaError("; ".join(problems))
++
++
++SWEGEMMA_PROMPTS = BenchPrompts(
++    work=(
++        "Fix a failing Python test in a repository checkout. The agent reads the problem "
++        "statement, localizes the behaviour, edits source, verifies with the named test or the "
++        "closest test for the changed symbol, and submits one unified diff with submit_patch. "
++        "A non-empty source-only diff is the deliverable."
++    ),
++    domain_word="repository",
++    inv_levers=(
++        "- reproduce the failure before editing; use the named test or a minimal script\n"
++        "- resolve which file the interpreter loaded before diagnosing a source/disk mismatch\n"
++        "- edit one layer per hypothesis, then re-run the same check; do not stack guesses\n"
++        "- reserve budget for verification and call submit_patch once as the terminal action"
++    ),
++    dom_levers=(
++        "- a failing test names the module that owns the behaviour; land the edit there\n"
++        "- distinguish a library bug from a fixture, environment, or test-harness gap\n"
++        "- read the failing assertion and the code path it exercises before choosing a layer\n"
++        "- when the loaded module and the file on disk disagree, resolve the path first"
++    ),
++    yardstick=(
++        "Did the run deliver a non-empty diff that leaves the repository coherent, with the "
++        "named test or the closest test for the changed symbol re-run after the edit?"
++    ),
++    selection_checks=(
++        "Prefer the candidate whose diff is source-only, lands in the module that owns the "
++        "failing behaviour, is verified against the named test or the nearest test, and leaves "
++        "no scratch files."
++    ),
++    selection_lead=(
++        "DELIVERED AND COHERENT. Prefer a candidate that produced a non-empty patch over one "
++        "that produced none; among patches, prefer the one whose changed lines sit in the code "
++        "path the failing assertion exercises and whose verification was actually run."
++    ),
++    prompt_pack="adapt",
++)
++
++
++def make_spec() -> BenchSpec:
++    channel = resolve_channel_model(None, None, effort="high")
++    return BenchSpec(
++        name="swegemma",
++        runs_root=config.SWEGEMMA_RUNS,
++        install_mode="workspace_config",
++        prompts=SWEGEMMA_PROMPTS,
++        channels={"proposer": channel, "selector": channel},
++        domain_word="repository",
++        leak_globs=(),
++        allow_subagents=True,
++        obs_trunc=50_000,
++        proposer_deliverables="contents",
++    )
++
++
++def _task_result(run_dir: Path) -> dict[str, Any] | None:
++    path = Path(run_dir) / "task_results.jsonl"
++    try:
++        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
++    except OSError:
++        return None
++    for line in lines:
++        if not line.strip():
++            continue
++        try:
++            record = json.loads(line)
++        except json.JSONDecodeError:
++            continue
++        if isinstance(record, dict):
++            return record
++    return None
++
++
++def _render_trace(data: Mapping[str, Any], obs_trunc: int, max_chars: int = 200_000) -> str:
++    steps = data.get("steps")
++    if not isinstance(steps, list):
++        return ""
++    out: list[str] = []
++    for step in steps:
++        if not isinstance(step, dict):
++            continue
++        source = str(step.get("source") or "step").upper()
++        message = step.get("message")
++        if isinstance(message, str) and message.strip():
++            out.append(f"[{source}] {message.strip()[:2000]}")
++        calls = step.get("tool_calls")
++        if isinstance(calls, list):
++            for call in calls:
++                if not isinstance(call, dict):
++                    continue
++                name = call.get("function_name")
++                args = json.dumps(call.get("arguments"), ensure_ascii=False)
++                out.append(f"[ACTION] {name}({args[:1000]})")
++        observation = step.get("observation")
++        if observation is not None:
++            text = (
++                observation
++                if isinstance(observation, str)
++                else json.dumps(observation, ensure_ascii=False)
++            )
++            out.append(f"[OBSERVATION] {text[:obs_trunc]}")
++    return "\n".join(out)[-max_chars:]
++
++
++class SwegemmaAdapter:
++    """The 12 protocol methods over the swegemma CLI and the archived raw results."""
++
++    def __init__(self, *, split_file: Path | None = None, timeout: int | None = None):
++        _load_repo_env()
++        self.spec = make_spec()
++        self.substrate = SwegemmaSubstrate()
++        self.split_file = split_file
++        self.timeout = int(timeout or 3900)
++        self._base_dir: Path | None = None
++
++    def tasks(self, split: str = "all") -> list[str]:
++        return _subset_ids()
++
++    def domain_of(self, task_id: str) -> str:
++        return _corpus().get(task_id, {}).get("repo", "unknown")
++
++    def reference_domain_order(self) -> list[str]:
++        return sorted({self.domain_of(task_id) for task_id in self.tasks()})
++
++    def task_prompt(self, task_id: str) -> str:
++        return _corpus()[task_id]["problem_statement"]
++
++    def task_files(self, task_id: str) -> Path | None:
++        return None
++
++    def base_harness(self) -> Path:
++        if self._base_dir is None:
++            self._base_dir = Path(tempfile.mkdtemp(prefix="swegemma-base-"))
++            shutil.copytree(
++                SUBMISSION,
++                self._base_dir,
++                dirs_exist_ok=True,
++                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
++            )
++        return self._base_dir
++
++    def _run_dir(self, run_id: str) -> Path:
++        return config.SWEGEMMA_RUNS / "raw" / run_id.replace("/", "__")
++
++    def execute(
++        self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
++    ) -> Path:
++        _load_repo_env()
++        run_dir = self._run_dir(run_id)
++        if (run_dir / "summary.json").is_file():
++            return run_dir
++        if run_dir.exists():
++            shutil.rmtree(run_dir)
++        run_dir.mkdir(parents=True, exist_ok=True)
++        tree = Path(harness_dir) if harness_dir is not None else self.base_harness()
++        aliases = _model_aliases(tree)
++        if not aliases:
++            raise SwegemmaError(f"no model: declaration under {tree}")
++        models = _write_models_yaml(run_dir / "models.yaml", aliases, config.SWEGEMMA_MODEL)
++        cmd = [
++            SWEGEMMA,
++            "eval",
++            "--tasks",
++            str(TASKS_FILE),
++            "--snapshots-dir",
++            str(SNAPSHOTS),
++            "--submission-dir",
++            str(tree),
++            "--task-ids",
++            task_id,
++            "--results-dir",
++            str(run_dir),
++            "--sandbox",
++            "docker",
++            "--max-tool-calls",
++            "100",
++            "--max-time-minutes",
++            "60",
++            "--concurrency",
++            "1",
++            "--display",
++            "auto",
++            "--models-yaml",
++            str(models),
++        ]
++        env = {**os.environ}
++        try:
++            result = subprocess.run(
++                cmd,
++                cwd=REPO,
++                env=env,
++                capture_output=True,
++                text=True,
++                timeout=int(timeout or self.timeout),
++            )
++        except subprocess.TimeoutExpired as exc:
++            raise SwegemmaError(f"rollout timed out for {task_id} @ {run_id}") from exc
++        except OSError as exc:
++            raise SwegemmaError(f"cannot run {SWEGEMMA}: {exc}") from exc
++        manifest = {
++            "run_id": run_id,
++            "task_id": task_id,
++            "tree": str(tree),
++            "tree_fingerprint": RM.fingerprint(tree),
++            "model": config.SWEGEMMA_MODEL,
++            "returncode": result.returncode,
++        }
++        (run_dir / "harness.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
++        if result.returncode != 0:
++            tail = (result.stderr or result.stdout or "").strip()[-2000:]
++            raise SwegemmaError(
++                f"swegemma eval exited {result.returncode} for {task_id} @ {run_id}: {tail}"
++            )
++        if not (run_dir / "summary.json").is_file():
++            raise SwegemmaError(f"no summary.json for {task_id} @ {run_id}")
++        return run_dir
++
++    def execute_many(
++        self,
++        task_id: str,
++        harness_dir: Path | None,
++        run_ids: list[str],
++        *,
++        timeout: int | None = None,
++    ) -> list[Path]:
++        """Run rolls serially: two Docker sandboxes on one host compete for memory."""
++        return [self.execute(task_id, harness_dir, run_id, timeout=timeout) for run_id in run_ids]
++
++    def delivered(self, run_dir: Path) -> bool:
++        record = _task_result(Path(run_dir))
++        if record is None:
++            return False
++        task_id = str(record.get("instance_id") or "")
++        patch = Path(run_dir) / "patches" / f"{task_id}.patch"
++        return patch.is_file() and patch.stat().st_size > 0
++
++    def trajectory(self, run_dir: Path, *, obs_trunc: int) -> str:
++        run_dir = Path(run_dir)
++        record = _task_result(run_dir) or {}
++        task_id = str(record.get("instance_id") or "")
++        parts: list[str] = []
++        trace = run_dir / "traces" / f"trace_{task_id}.json"
++        if trace.is_file():
++            try:
++                data = json.loads(trace.read_text(encoding="utf-8", errors="replace"))
++            except json.JSONDecodeError:
++                data = {}
++            if isinstance(data, dict):
++                parts.append(_render_trace(data, obs_trunc))
++        log = run_dir / "logs" / f"{task_id}.log"
++        if log.is_file():
++            parts.append(log.read_text(encoding="utf-8", errors="replace")[-obs_trunc:])
++        return "\n\n".join(part for part in parts if part.strip()) or f"(no trajectory for {task_id})"
++
++    def deliverable_files(self, run_dir: Path) -> dict[str, str]:
++        return {"agent_patch.diff": self.deliverable_text(run_dir)}
++
++    def deliverable_text(self, run_dir: Path) -> str:
++        run_dir = Path(run_dir)
++        record = _task_result(run_dir) or {}
++        task_id = str(record.get("instance_id") or "")
++        patch = run_dir / "patches" / f"{task_id}.patch"
++        try:
++            return patch.read_text(encoding="utf-8", errors="replace")
++        except OSError:
++            return ""
++
++    def validate_tree(self, tree: dict[str, str]) -> None:
++        surface = self.substrate.surface()
++        tmp = Path(tempfile.mkdtemp(prefix="swegemma-validate-"))
++        try:
++            HT.write_tree(surface, tree, tmp)
++            env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
++            result = subprocess.run(
++                [sys.executable, "-m", "kaggle_gemma_agent.pack", str(tmp), "--check"],
++                cwd=REPO,
++                env=env,
++                capture_output=True,
++                text=True,
++                timeout=300,
++            )
++        except (OSError, subprocess.SubprocessError) as exc:
++            raise ValueError(f"pack checks could not run: {exc}") from exc
++        finally:
++            shutil.rmtree(tmp, ignore_errors=True)
++        if result.returncode != 0:
++            tail = (result.stdout + result.stderr).strip()[-3000:]
++            raise ValueError(tail or "pack checks failed with no output")
++
++    def score(self, run_dir: Path, task_id: str) -> dict[str, Any] | None:
++        record = _task_result(Path(run_dir))
++        if record is None or record.get("instance_id") != task_id:
++            return None
++        resolved = record.get("resolved")
++        if not isinstance(resolved, bool):
++            return None
++        return {
++            "n_passed": 1 if resolved else 0,
++            "n_criteria": 1,
++            "all_pass": resolved,
++            "metric": "pytest",
++            "resolved": resolved,
++        }
+diff --git a/harness2/cli/_common.py b/harness2/cli/_common.py
+index 06d4130..da68dc3 100644
+--- a/harness2/cli/_common.py
++++ b/harness2/cli/_common.py
+@@ -27,9 +27,9 @@ from ..core import library as LIB
+ from ..core import schedule as SCHED
+ from ..core.spec import BenchmarkAdapter
+ 
+-BENCHES = ("jb", "wb", "lab")
++BENCHES = ("jb", "wb", "lab", "sw")
+ WB_SUBSETS = ("office", "web", "code")
+-SUBSTRATES = ("oc", "cx")
++SUBSTRATES = ("oc", "cx", "sw")
+ 
+ MODES_DEFAULT = "parallel"
+ MODES_HELP = (
+@@ -50,6 +50,14 @@ def make_adapter(
+         raise ValueError(f"unknown bench {bench!r}; expected one of {BENCHES}")
+     if substrate not in SUBSTRATES:
+         raise ValueError(f"unknown substrate {substrate!r}; expected one of {SUBSTRATES}")
++    if bench == "sw":
++        if substrate != "sw":
++            raise ValueError("--bench sw needs --substrate sw")
++        from ..benchmarks.swegemma import SwegemmaAdapter
++
++        return SwegemmaAdapter(split_file=split_file)
++    if substrate == "sw":
++        raise ValueError("--substrate sw is only valid with --bench sw")
+     if bench == "wb":
+         if subset not in WB_SUBSETS:
+             raise ValueError(f"--bench wb needs --subset from {WB_SUBSETS}, got {subset!r} ")
+diff --git a/harness2/cli/check.py b/harness2/cli/check.py
+index 638eaab..13a5284 100644
+--- a/harness2/cli/check.py
++++ b/harness2/cli/check.py
+@@ -24,9 +24,9 @@ from harness2.preflight import check
+ 
+ def main(argv=None):
+     p = argparse.ArgumentParser(description=__doc__)
+-    p.add_argument("--bench", choices=("jb", "lab", "wb"), required=True)
++    p.add_argument("--bench", choices=("jb", "lab", "wb", "sw"), required=True)
+     p.add_argument("--subset", choices=("office", "web", "code"))
+-    p.add_argument("--substrate", choices=("oc", "cx"), default="oc")
++    p.add_argument("--substrate", choices=("oc", "cx", "sw"), default="oc")
+     args = p.parse_args(argv)
+     try:
+         adapter = make_adapter(args.bench, args.subset, args.substrate)
+diff --git a/harness2/cli/run_sweep.py b/harness2/cli/run_sweep.py
+index 0876f4e..7a43573 100644
+--- a/harness2/cli/run_sweep.py
++++ b/harness2/cli/run_sweep.py
+@@ -34,6 +34,7 @@ from __future__ import annotations
+ 
+ import argparse
+ import json
++import os
+ import sys
+ from datetime import datetime, timezone
+ from pathlib import Path
+@@ -210,13 +211,23 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
+     """Prevent a resumed run or library from silently mixing models or task partitions."""
+     identity = {
+         "method_version": config.METHOD_VERSION,
+-        "executor": config.SOLVER_MODEL_OC if args.substrate == "oc" else config.SOLVER_MODEL_CX,
++        "executor": {
++            "oc": config.SOLVER_MODEL_OC,
++            "cx": config.SOLVER_MODEL_CX,
++            "sw": config.SWEGEMMA_MODEL,
++        }[args.substrate],
+         "improver": config.IMPROVER_MODEL,
+         "judge": config.JUDGE_MODEL,
+         "project": config.VERTEX_PROJECT,
+         "location": config.VERTEX_REGION,
+         "judge_endpoint": config.JB_JUDGE_API_BASE,
+-        "endpoint": config.CODEX_BASE_URL if args.substrate == "cx" else "",
++        "endpoint": (
++            config.CODEX_BASE_URL
++            if args.substrate == "cx"
++            else os.environ.get("OPENAI_BASE_URL", "")
++            if args.substrate == "sw"
++            else ""
++        ),
+         "split": args.split,
+         "tasks": _stream_for(adapter, args)[1],
+         "max_tasks": args.max_tasks,
+diff --git a/harness2/config.py b/harness2/config.py
+index 59e0703..d3ec781 100644
+--- a/harness2/config.py
++++ b/harness2/config.py
+@@ -171,6 +171,11 @@ WB_MAX_JOBS = {"oc": 1, "cx": 1}
+ WB_MAX_TRIALS = {"oc": 2, "cx": 2}
+ WB_MODEL_CONNECTION = "local_proxy"
+ 
++SWEGEMMA_ROOT = Path(env("HARNESS2_SWEGEMMA_ROOT", ".")).expanduser().resolve()
++SWEGEMMA_MODEL = env("HARNESS_MODEL", "")
++SWEGEMMA_SUBSET = env("HARNESS2_SWEGEMMA_SUBSET", "dev-v1")
++SWEGEMMA_RUNS = Path(env("HARNESS2_SWEGEMMA_RUNS", SWEGEMMA_ROOT / "runs" / "harness2"))
++
+ DEFAULT_PROPOSER_CHANNEL = "opencode"
+ PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": IMPROVER_MODEL}
+ PHASE_WIDTH = 2
+diff --git a/harness2/core/tree.py b/harness2/core/tree.py
+index c9bf134..c51cdf3 100644
+--- a/harness2/core/tree.py
++++ b/harness2/core/tree.py
+@@ -22,6 +22,7 @@ changes.
+ 
+ from __future__ import annotations
+ 
++import fnmatch
+ import json
+ import re
+ from dataclasses import dataclass
+@@ -58,6 +59,7 @@ class SurfaceSpec:
+     reject_empty_always_on: bool = False
+ 
+     stubs: tuple[tuple[str, str], ...] = ()
++    extra_globs: tuple[str, ...] = ()
+ 
+ 
+ @lru_cache(maxsize=8)
+@@ -107,6 +109,8 @@ def is_allowed(surface: SurfaceSpec, rel: str) -> bool:
+         or r["script"].fullmatch(rel)
+     ):
+         return True
++    if any(fnmatch.fnmatchcase(rel, pattern) for pattern in surface.extra_globs):
++        return True
+     return "plugin" in r and bool(r["plugin"].fullmatch(rel))
+ 
+ 
+@@ -137,7 +141,7 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
+     for p in sorted(d.rglob("*")):
+         if not p.is_file() or "__pycache__" in p.parts:
+             continue
+-        rel = str(p.relative_to(d))
++        rel = p.relative_to(d).as_posix()
+         if rel in stubs:
+             continue
+         if not is_allowed(surface, rel):
+@@ -164,7 +168,7 @@ def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: boo
+     for p in sorted(dest.rglob("*"), reverse=True):
+         if not p.is_file():
+             continue
+-        rel = str(p.relative_to(dest))
++        rel = p.relative_to(dest).as_posix()
+         if is_allowed(surface, rel) or rel in stub_set:
+             p.unlink()
+     for a in surface.always_on:
+diff --git a/harness2/preflight.py b/harness2/preflight.py
+index 93651cd..2775cf6 100644
+--- a/harness2/preflight.py
++++ b/harness2/preflight.py
+@@ -26,6 +26,18 @@ from .substrate.opencode import OpencodeSubstrate
+ 
+ 
+ def check(adapter, *, judge=False) -> list[str]:
++    if adapter.spec.name == "swegemma":
++        errors = []
++        for validate in (
++            lambda: config.validate_models(judge=False),
++            adapter.tasks,
++            adapter.substrate.preflight,
++        ):
++            try:
++                validate()
++            except (OSError, RuntimeError, ValueError) as exc:
++                errors.append(str(exc))
++        return errors
+     missing = missing_runners()
+     if missing:
+         return [missing]
