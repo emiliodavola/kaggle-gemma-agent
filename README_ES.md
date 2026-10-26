@@ -85,6 +85,12 @@ presupuestos dentro de los límites en `eval_config.yaml` (**d**, 100 llamadas /
 60 min / 500 turnos); sin cadenas de red / pip / MCP / subprocess bajo
 `submission/` (**e**); y un archivo por debajo de **3 GiB** (**f**).
 
+Una segunda capa, independiente, valida la superficie del harness: cada skill
+está nombrada en el prompt always-on (**s1**), ese prompt queda por debajo de
+`MAX_ALWAYS_ON_CHARS` (**s2**) y cada `scripts/<file>.py` referenciado se envía
+en el archivo (**s3**). Imprime `harness surface OK (3 checks)` junto a la línea
+`6/6` sin cambios, y `--check` falla si falla cualquiera de las dos capas.
+
 ## Resumen del submission
 
 `submission.zip` contiene:
