@@ -106,11 +106,12 @@ Check:     <the command or observation that must pass after the edit>
 
 The block above and the sentences in this section are **the enforced zone**. The
 zone carries no measurement vocabulary: none of the terms that the `grep -Einw`
-command in the pull request that added this file matches, case-insensitively, as
-whole words. That command is the normative list, and it is not repeated here:
-writing the terms inside the zone would put each of them inside the scope it
-governs. The ban covers this section only. Outside it, this document names run
-ids and counts as evidence, because the evidence rule requires them.
+command recorded under its `## Brief template` verification in issue #93
+matches, case-insensitively, as whole words. That command is the normative list,
+and it is not repeated here: writing the terms inside the zone would put each of
+them inside the scope it governs. The ban covers this section only. Outside it,
+this document names run ids and counts as evidence, because the evidence rule
+requires them.
 
 ## Composition
 
@@ -133,12 +134,11 @@ here.
 ### `DOM` / `EDIT` — `requests_6644`
 
 Moment: `(requests_6644, runs/20261009T122847Z/requests_6644/agent_patch.diff,
-lines 9-10)`, with the graded assertion in
+lines 6-10)`, with the graded assertion at lines 9-13 of
 `runs/20261009T122847Z/requests_6644/test_output.log`:
 
 ```text
-diff --git a/src/requests/models.py b/src/requests/models.py
-@@ -466,6 +466,8 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+         # Bare domains aren't valid URLs.
          if not path:
              path = "/"
 +        elif path.startswith("//"):
@@ -146,9 +146,11 @@ diff --git a/src/requests/models.py b/src/requests/models.py
 ```
 
 ```text
+        p = requests.Request(method="GET", url="http://127.0.0.1:10000//v:h").prepare()
 >       assert "/v:h" == a.request_url(p, {})
 E       AssertionError: assert '/v:h' == '//v:h'
-tests/test_adapters.py:8: AssertionError
+E         
+E         - //v:h
 ```
 
 Observed: the delivered patch edits `PreparedRequest.prepare_url` in
@@ -163,13 +165,14 @@ there, and the check that the quoted failing test file passes afterwards.
 ### `INV` / `EDIT` — `requests_7315`
 
 Moment: `(requests_7315, runs/20261009T122847Z/requests_7315/trace.json, steps
-43 and 45)` — two successive agent turns naming the same divergence — with the
-delivery fields in `runs/20261009T122847Z/report.json` (`tool_calls 22`,
-`wall_seconds 445.63`, `patch_path None`).
+43 and 45)` — two successive agent turns naming the same divergence, each quoted
+up to its first sentence with `…` marking the cut — with `tool_calls 22`,
+`wall_seconds 445.63` and `patch_path None` from
+`runs/20261009T122847Z/report.json`.
 
 ```text
-43 agent | Okay, I'm seeing a huge discrepancy between what `inspect.getsource(HTTPAdapter.request_url)` returns and what `grep` / `sed` / `read_file` return for the same file on disk.
-45 agent | Okay, I'm seeing a huge discrepancy between what `inspect.getsource(HTTPAdapter.request_url)` returns and what `cat` / `grep` / `read_file` return from the file on disk.
+43 agent | Okay, I'm seeing a huge discrepancy between what `inspect.getsource(HTTPAdapter.request_url)` returns and what `grep` / `sed` / `read_file` return for the same file on disk. …
+45 agent | Okay, I'm seeing a huge discrepancy between what `inspect.getsource(HTTPAdapter.request_url)` returns and what `cat` / `grep` / `read_file` return from the file on disk. …
 ```
 
 Observed: the same diagnosis is repeated across two turns, the session consumes
@@ -182,23 +185,26 @@ the check that the next archived run of the same task reaches `submit_patch`.
 ### `KEEP_BASE` — `requests_7505`
 
 Moment: `(requests_7505,
-runs/20261009T122847Z/requests_7505/test_output.log, first error block)` with the
-delivery fields in `runs/20261009T122847Z/report.json` (`patch_scope src_only`,
-`submitted true`, `tool_calls 56`, `wall_seconds 1023.23`) and the recorded
+runs/20261009T122847Z/requests_7505/test_output.log, lines 11-15)`, with
+`tool_calls 56` and `wall_seconds 1023.23` from
+`runs/20261009T122847Z/report.json`, the delivered patch under `src/requests/` in
+`runs/20261009T122847Z/requests_7505/agent_patch.diff`, and the recorded
 `patch_scope.src_only = 5` batch total in `odd/tasks/88-delivery-record.md`.
 
 ```text
-__________ ERROR at setup of TestRequests.test_no_content_length[GET] __________
-file /workspace/tests/test_requests.py, line 124
+      def test_no_content_length(self, httpbin, method):
 file /workspace/tests/conftest.py, line 34
+  @pytest.fixture
+  def httpbin(httpbin):
 E       recursive dependency involving fixture 'httpbin' detected
 ```
 
 Observed: the patch this task delivered is source-only and in scope, and the
 archived log is dominated by 197 setup errors from a recursively defined
-`httpbin` fixture, not by the graded assertion. One delivery count is not a
-resolution count: the batch total is five source-only deliverables out of thirteen
-tasks, not five solved tasks.
+`httpbin` fixture, not by the graded assertion. The per-task scope is derived by
+`run_report._delivery_record` from the patch paths, because `report.json` does not
+carry it. One delivery count is not a resolution count: the batch total is five
+source-only deliverables out of thirteen tasks, not five solved tasks.
 
 What argues against an edit: the task's artifacts contain no moment for either
 dimension that the two moments above do not already cover, and a sandbox fixture
