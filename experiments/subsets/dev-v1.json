@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "id": "dev-v1",
+  "description": "Fixed contrast set for harness A/B runs on the gemma-4 developer agent. It is not a resolution-rate estimate: tasks are chosen for signal and repository coverage, not sampled at random.",
+  "selection": "Selected from the 69 tasks with at least one archived run under runs/ (read 2026-10-26). Keeps six of the eleven tasks that resolved at least once (rich_3006, rich_3061, rich_3063, requests_7315, requests_7427, fastapi_15589) and five that never resolved, covering test_failure (rich_3468, rich_3777, requests_6644, fastapi_15588) and collection_error (httpx_3672). Excludes every task whose archived run had infra_error=true. Per-repository caps: rich 5, requests 3, fastapi 2, httpx 1. Deliberately not corpus-proportional: fastapi has 67 tasks but only three non-infra archived results.",
+  "task_ids": [
+    "fastapi_15588",
+    "fastapi_15589",
+    "httpx_3672",
+    "requests_6644",
+    "requests_7315",
+    "requests_7427",
+    "rich_3006",
+    "rich_3061",
+    "rich_3063",
+    "rich_3468",
+    "rich_3777"
+  ],
+  "counts": {
+    "Textualize/rich": 5,
+    "encode/httpx": 1,
+    "fastapi/fastapi": 2,
+    "psf/requests": 3
+  }
+}
