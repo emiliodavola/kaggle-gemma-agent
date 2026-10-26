@@ -91,13 +91,23 @@ green, and `uv run pytest tests/ -q` with no new failing node id relative to the
 - [x] T4 - Runner `--subset`/`--experiment`, tests. Route: inline. Commit: `92a14b6`.
   Evidence: focused runner tests 5 passed; `run_host_trial.py --help` lists both flags;
   full suite `5 failed, 409 passed` (same five baseline node ids).
-- [x] T5 - `experiments.py` start/finish/compare, tests, docs and journal entry. Route: inline. Commit: pending (closes Level 0).
+- [x] T5 - `experiments.py` start/finish/compare, tests, docs and journal entry. Route: inline. Commit: `f2d583e` (closes Level 0).
   Evidence: 12 focused tests; `experiments --help` lists start/finish/show; full suite
   `5 failed, 421 passed`; `pack submission --check` -> 6/6 + surface + answer leak;
   journal `J-20261026-07` and `journal OK (46 events)`.
-- [ ] T6 - harness2 fork, adapter patch, `setup.sh`, dry-run validation. Route: inline. Commit: pending.
-- [ ] T7 - Falsifier, 4 rollouts, run analysis, journal entry. Route: inline. Commit: pending (closes Level 1).
-- [ ] T8 - Close: observed results, Risk line, next step.
+- [x] T6 - harness2 fork, adapter patch, `setup.sh`, dry-run validation. Route: inline. Commit: pending.
+  Evidence: the patch applies cleanly to `1cfe254` on a fresh clone; `python -m
+  harness2.cli.check --bench sw --substrate sw` -> `Ready: swegemma/sw; 11 tasks`;
+  the dry-run prints 1 task / 1 domain; `validate_tree` returns `pack OK`.
+- [x] T7 - Falsifier, 4 rollouts, run analysis, journal entry. Route: inline. Commit: pending (closes Level 1).
+  Evidence: PASS (`four_archived`, `fingerprints_differ`, `signal` all true); total
+  5 204.30 s; `requests_7315` variant 3 626.02 s / 89 tool calls; result
+  `runs/harness2-falsifier/20261026T152738Z.json`; analysis
+  `docs/runs/20261026T152738Z/01-falsifier.md`.
+- [x] T8 - Close: observed results, Risk line, next step.
+  Risk: none (dev-only tooling and docs; no submission file changes; pack 6/6 + surface
+  + answer leak green; the adapter runs swegemma against a copy and writes only under
+  `runs/`).
 
 ## Log
 
@@ -122,3 +132,12 @@ green, and `uv run pytest tests/ -q` with no new failing node id relative to the
   `experiments start|finish|show` CLI. Full suite `5 failed, 421 passed` (same five baseline
   node ids); `pack submission --check` green; journal `J-20261026-07`. `run-reports.md` also
   gained its missing six-field header while it was being updated.
+- L7 (2026-10-26, Level 1 falsifier): PASS on 2 tasks x 2 trees (4 serial rollouts).
+  All four archived; base/variant fingerprints `790d06db...` vs `602f49e9...`; all four
+  patches differ. Total 5 204.30 s. Three rollouts 7.3-9.7 min; `requests_7315` variant
+  3 626.02 s (60 min 26 s), 89/100 tool calls, 107 LLM calls, still resolved. No
+  attribution: the falsifier declared no direction and ran one pair per task.
+- L8 (2026-10-26, Level 1 closed): the adapter is versioned as a patch under
+  `tools/harness2-swegemma/`; the clone and rollouts stay under `tmp/`/`runs/`. Level 2
+  (full `k=1` Propose-Probe-Compose) is technically possible and deliberately not started;
+  the next decision is its cost and domain, with the 60-minute outlier as the first warning.
