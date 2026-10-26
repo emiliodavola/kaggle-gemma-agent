@@ -72,6 +72,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PROMPT_FILE = "submission/prompts/system.md"
 SAMPLING_FILE = "submission/configs/sampling.yaml"
 EVAL_CONFIG_FILE = "submission/eval_config.yaml"
+#: Submission skill tree hashed into a run's journal provenance.
+SKILLS_DIR = "submission/skills"
 
 
 class HarnessRunsError(Exception):
@@ -266,17 +268,47 @@ def repo_commit(repo_root: Path) -> str | None:
     return sha
 
 
+def _sha256_tree_or_none(root: Path) -> str | None:
+    """Return the hex ``sha256`` of a directory tree, or ``None`` when it is absent.
+
+    For each file, in ascending order of its POSIX relative path byte value, the
+    digest is fed the UTF-8 relative path, a NUL byte, the file's raw bytes and
+    another NUL byte. Path separators are normalised to ``/`` so a Windows and a
+    Linux checkout of the same bytes produce the same digest.
+    ``__pycache__`` directories and ``*.pyc`` files are skipped; nothing else is.
+    """
+    if not root.is_dir():
+        return None
+    paths: list[tuple[bytes, Path]] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if "__pycache__" in relative.parts or relative.suffix == ".pyc":
+            continue
+        paths.append((relative.as_posix().encode("utf-8"), path))
+    digest = hashlib.sha256()
+    for encoded, path in sorted(paths, key=lambda item: item[0]):
+        digest.update(encoded)
+        digest.update(b"\x00")
+        digest.update(path.read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
 def provenance_hashes(repo_root: Path | None = None) -> dict[str, str | None]:
     """Return the run provenance hashes, ``None`` for any missing input.
 
     Keys are ``prompt``, ``sampling``, ``eval_config`` (sha256 of the submission
-    files) and ``repo_commit`` (HEAD sha, ``-dirty`` when the worktree is dirty).
+    files), ``skills`` (sha256 of the submission skill tree) and ``repo_commit``
+    (HEAD sha, ``-dirty`` when the worktree is dirty).
     """
     root = Path(repo_root) if repo_root is not None else REPO_ROOT
     return {
         "prompt": _sha256_or_none(root / PROMPT_FILE),
         "sampling": _sha256_or_none(root / SAMPLING_FILE),
         "eval_config": _sha256_or_none(root / EVAL_CONFIG_FILE),
+        "skills": _sha256_tree_or_none(root / SKILLS_DIR),
         "repo_commit": repo_commit(root),
     }
 
