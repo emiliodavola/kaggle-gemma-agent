@@ -40,6 +40,12 @@ Every document belongs to one of five genres:
   (`docs/journal/YYYYMMDD.md`) rendered from the machine file
   `docs/journal/events.jsonl`. See `## Change journal` below.
 
+Every attribution in a run analysis or proposal carries one of the four verdicts
+defined in `docs/run-analysis-vocabulary.md` (`helped`, `hurt`, `no observed
+effect`, `confounded`). `confounded` is the default when no execution contrast
+isolates the change. A statement that only reports what an artifact contains is
+an observation and carries none.
+
 Every document starts with a six-field header block (`Date`, `Genre`, `Status`,
 `Scope`, `Source of truth`, `Limits`); fill the values from the document itself.
 

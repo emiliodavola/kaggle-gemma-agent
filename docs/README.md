@@ -41,6 +41,10 @@ the evidence. Run analyses are append-only: to revise one, add a new document
 (same run directory) that supersedes it, and mark the old one with
 `Status: superseded-by <path>`. Never delete evidence.
 
+Every attribution in a run analysis or proposal carries one of the four verdicts
+defined in `run-analysis-vocabulary.md`; an observation that attributes nothing
+to a change carries none.
+
 ## Index
 
 `Run` is the run id for run analyses, or `—` when not tied to a single run.
@@ -58,6 +62,7 @@ the evidence. Run analyses are append-only: to revise one, add a new document
 | [runs/20261006T103737Z/07-segment-requests-httpx.md](runs/20261006T103737Z/07-segment-requests-httpx.md) | run analysis | current | The requests_*/httpx_*/other segments (70 executions; httpx and other have zero). | 20261004, 20261005, 20261006T103737Z | runs/ (20261004T225306Z, 20261005T050122Z, 20261006T103737Z) (read 2026-10-06) | 2026-10-06 |
 | [runs/20261006T103737Z/08-cross-segment-synthesis.md](runs/20261006T103737Z/08-cross-segment-synthesis.md) | run analysis | current | Intra/inter-segment synthesis over 70 executions plus a generalised anti-overfit proposal; not a formal A/B. | 20261004, 20261005, 20261006T103737Z | runs/ (3 run ids) and the segment reports (read 2026-10-06) | 2026-10-06 |
 | [runs/20261006T103737Z/09-corrections.md](runs/20261006T103737Z/09-corrections.md) | run analysis | current | Corrects specific claims in 01-audit.md, 03-failures-by-prompt-version.md and 04-harness-messages.md that disagree with the raw run artifacts; does not re-audit run_03. | 20261006T103737Z | runs/20261006T103737Z/, runs/20261004T225306Z/, runs/20261005T050122Z/, results/run_03/, results/run_01/, results/run_02/ (read 2026-10-07) | 2026-10-07 |
+| [runs/20261009T122847Z/01-attribution-audit.md](runs/20261009T122847Z/01-attribution-audit.md) | run analysis | current | Observations and attributions for run 20261009T122847Z and its comparison with run 20261008T025904Z; does not re-audit other runs. | 20261009T122847Z | runs/20261009T122847Z/, runs/20261008T025904Z/, data/raw/tasks.jsonl, docs/journal/events.jsonl (read 2026-10-26) | 2026-10-26 |
 | [tasks/20261006-inventory-129.md](tasks/20261006-inventory-129.md) | task digest | current | One-line problem-statement title per task for all 129 dev tasks, grouped by segment. | — | data/raw/tasks.jsonl (read 2026-10-06) | 2026-10-06 |
 | [tasks/20261006-strategies-fastapi-a.md](tasks/20261006-strategies-fastapi-a.md) | task digest | current | Strategy and complexity for fastapi_11194 to fastapi_14372 (25 tasks). | — | data/raw/tasks.jsonl (read 2026-10-06) | 2026-10-06 |
 | [tasks/20261006-strategies-fastapi-b.md](tasks/20261006-strategies-fastapi-b.md) | task digest | current | Strategy and complexity for fastapi_14371 to fastapi_9753 (44 tasks). | — | data/raw/tasks.jsonl (read 2026-10-06) | 2026-10-06 |
@@ -72,6 +77,7 @@ the evidence. Run analyses are append-only: to revise one, add a new document
 | [harness-logging-contract.md](harness-logging-contract.md) | living reference | current | What the swegemma harness logs per task and what is required to run a local trial. | — | data/raw/HARNESS_README.md, data/raw/tasks.jsonl, data/raw/docker/ (read 2026-10-06) | 2026-09-30 |
 | [host-trial-runbook.md](host-trial-runbook.md) | living reference | current | Operator runbook to run a real swegemma trial on Windows/Docker or Linux/WSL2. | — | scripts/host-trial/run_host_trial.py and the harness contract (read 2026-10-06) | 2026-10-25 |
 | [run-reports.md](run-reports.md) | living reference | current | Handoff contract for file-based run reports: runs/ layout, report.json schema, STATUS polling, delivery record, manifest provenance. | — | src/kaggle_gemma_agent/harness_runs.py, run_report.py (read 2026-10-25) | 2026-10-25 |
+| [run-analysis-vocabulary.md](run-analysis-vocabulary.md) | living reference | current | The four verdicts used by every run analysis and proposal, the execution-contrast rule and the claim-record format. | — | AGENTS.md § Change journal, harness2 prompts.py, runs/20261009T122847Z/, runs/20261008T025904Z/ (read 2026-10-26) | 2026-10-26 |
 | [skill-stack-inventory.md](skill-stack-inventory.md) | living reference | current | Inventory of candidate skills (86 items, 8 gaps) with compatibility, dependencies and licenses. | — | upstream SKILL.md files and repo metadata (read 2026-10-06) | 2026-09-28 |
 | [journal/README.md](journal/README.md) | journal | current | Genre spec for the change journal: two layers, entry schema, human file format, CLI and CI guard. | — | docs/journal/events.jsonl, src/kaggle_gemma_agent/journal.py (read 2026-10-07) | 2026-10-07 |
 | [journal/events.jsonl](journal/events.jsonl) | journal | current | Machine layer of the change journal: append-only JSON Lines, the source of truth for the human day files. | — | docs/journal/events.jsonl (read 2026-10-07) | 2026-10-07 |
