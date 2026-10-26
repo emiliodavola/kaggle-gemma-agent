@@ -94,6 +94,17 @@ submission content, prompts, skills or harness runs.
 
 Format, schema and CLI: `docs/journal/README.md`.
 
+## Experiment loop
+
+A harness change is measured on a fixed subset against a pre-declared component:
+`experiments/subsets/<id>.json`, then `experiments/<experiment-id>/experiment.json`
+before the first rollout, then `comparison.json` after the two runs. The runs
+stay in `runs/` (git-ignored); the subset and the declaration are committed.
+`finish` refuses a comparison when the subset, backend, model, budgets or any
+provenance hash other than the declared component differs, and it reports the
+delivery signal separately from the resolution verdict. See
+`docs/dev-experiment-loop.md`.
+
 ## Layout
 
 ```
@@ -119,6 +130,10 @@ Format, schema and CLI: `docs/journal/README.md`.
 `src/` is currently only the `uv init` template. Keep the directory; it is
 reserved for future helpers (harness runners, submission packers, local
 evaluation scripts).
+
+`experiments/` holds committed subset documents and experiment declarations; the
+generated comparison sits beside each declaration. It is data and tool input,
+not a documentation genre. The protocol is `docs/dev-experiment-loop.md`.
 
 ## Toolchain: uv only
 

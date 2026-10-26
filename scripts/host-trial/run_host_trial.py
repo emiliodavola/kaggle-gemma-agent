@@ -34,7 +34,8 @@ Backend wiring (see ``docs/host-trial-runbook.md`` section 6):
   starts a short-lived local forwarding proxy and points ``OPENAI_BASE_URL`` at
   it; the proxy stamps the header and forwards to the real backend. The LLM
   calls originate in the host ``swegemma`` process (the ADK ``Runner`` runs
-  host-side and Container A is ``network_mode='none'``), so a host-local proxy
+  host-side and Container A is `
+etwork_mode='none'``), so a host-local proxy
   is sufficient.
 * The wire model follows ``HARNESS_MODEL``. The runner generates a
   ``models.yaml`` at run time that maps every ``model:`` alias declared by the
@@ -72,7 +73,7 @@ from dataclasses import dataclass
 from email.message import Message
 from email.parser import Parser
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -136,6 +137,7 @@ SESSION_ENV = "HARNESS_TRIAL_SESSION"
 TASKS_ENV = "HARNESS_TRIAL_TASKS"
 #: Where the resolved task list came from, for logging and shadow detection.
 TASK_SOURCE_FLAG = "--tasks"
+TASK_SOURCE_SUBSET = "--subset"
 TASK_SOURCE_PROCESS_ENV = "process env"
 TASK_SOURCE_ENV_FILE = ".env"
 TASK_SOURCE_DEFAULT = "default"
@@ -443,6 +445,25 @@ def load_corpus_task_ids(tasks_file: Path) -> tuple[str, ...]:
     return tuple(ids)
 
 
+def load_subset_for_trial(source: str | Path, *, repo_root: Path, tasks_file: Path) -> Any:
+    """Load and corpus-validate a ``--subset`` value for the trial runner."""
+    try:
+        from kaggle_gemma_agent import subsets
+    except ImportError as exc:
+        raise TrialError(
+            "--subset needs the repository package; run with "
+            "`uv run python scripts/host-trial/run_host_trial.py ...`"
+        ) from exc
+    try:
+        subset = subsets.load_subset(source, root=repo_root)
+        errors = subsets.validate_against_corpus(subset, tasks_file)
+    except subsets.SubsetError as exc:
+        raise TrialError(f"invalid --subset: {exc}") from exc
+    if errors:
+        raise TrialError("invalid --subset: " + "; ".join(errors))
+    return subset
+
+
 def select_trial_tasks(values: Sequence[str], corpus: Sequence[str]) -> tuple[str, ...]:
     """Expand ``--tasks`` *values* against *corpus* in corpus order, deduplicated.
 
@@ -480,11 +501,12 @@ def select_trial_tasks(values: Sequence[str], corpus: Sequence[str]) -> tuple[st
 class TaskResolution:
     """Resolved trial task ids plus the source that won.
 
-    ``process_value`` and ``env_file_value`` are the raw ``HARNESS_TRIAL_TASKS``
-    strings; they let the runner flag a process environment that shadows a
-    different ``.env`` value. ``request``, ``corpus_size`` and ``requested_all``
-    describe a ``--tasks`` selection so :func:`note_task_resolution` can print the
-    request, the count and the whole-corpus warning.
+        ``process_value`` and ``env_file_value`` are the raw ``HARNESS_TRIAL_TASKS``
+        strings; they let the runner flag a process environment that shadows a
+        different ``.env`` value. ``request``, ``corpus_size`` and ``requested_all``
+        describe a ``--tasks`` selection so :func:
+    ote_task_resolution` can print the
+        request, the count and the whole-corpus warning.
     """
 
     task_ids: tuple[str, ...]
@@ -510,16 +532,26 @@ def describe_task_resolution(
     default: tuple[str, ...] = TASK_IDS,
     requested: Sequence[str] | None = None,
     corpus: Sequence[str] = (),
+    subset: Any | None = None,
 ) -> TaskResolution:
     """Resolve the trial task ids and record which source won.
 
-    Precedence: the ``--tasks`` *requested* values (expanded against *corpus* by
-    :func:`select_trial_tasks`) win over the process environment, then ``.env``,
-    then *default*. When *requested* is falsy the env/default behaviour is
-    unchanged.
+    Precedence: ``--subset`` wins over the ``--tasks`` *requested* values
+    (expanded against *corpus* by :func:`select_trial_tasks`), which win over
+    the process environment, then ``.env``, then *default*. When *requested* is
+    falsy the env/default behaviour is unchanged.
     """
     process_value = environ.get(TASKS_ENV, "")
     env_file_value = env_file_values.get(TASKS_ENV, "")
+    if subset is not None:
+        return TaskResolution(
+            task_ids=tuple(subset.task_ids),
+            source=TASK_SOURCE_SUBSET,
+            process_value=process_value,
+            env_file_value=env_file_value,
+            request=str(subset.id),
+            corpus_size=len(corpus),
+        )
     if requested:
         values = parse_trial_tasks(",".join(requested), default=())
         if not values:
@@ -580,6 +612,13 @@ def note_task_resolution(env_file: Path, resolution: TaskResolution) -> None:
                 f"WARNING: --tasks {TASK_ALL_SELECTOR} selects the whole corpus "
                 f"({resolution.corpus_size} tasks); this run is long."
             )
+        note(
+            f"trial tasks ({len(resolution.task_ids)}): "
+            f"{_format_task_ids(resolution.task_ids, limit=TASK_LIST_PREVIEW)}"
+        )
+        return
+    if resolution.source == TASK_SOURCE_SUBSET:
+        note(f"trial tasks source: {TASK_SOURCE_SUBSET} ({resolution.request})")
         note(
             f"trial tasks ({len(resolution.task_ids)}): "
             f"{_format_task_ids(resolution.task_ids, limit=TASK_LIST_PREVIEW)}"
@@ -918,6 +957,11 @@ def build_archive_args(
     backend: str = BACKEND_ALIAS,
     sandbox_deps_mode: str | None = None,
     timestamp: str | None = None,
+    *,
+    backend_name: str | None = None,
+    model: str | None = None,
+    experiment: str | None = None,
+    subset: Path | None = None,
 ) -> list[str]:
     """Build the ``harness_runs archive`` argv."""
     args = [
@@ -931,6 +975,14 @@ def build_archive_args(
         "--backend",
         backend,
     ]
+    if backend_name is not None:
+        args += ["--backend-name", backend_name]
+    if model is not None:
+        args += ["--model", model]
+    if experiment is not None:
+        args += ["--experiment", experiment]
+    if subset is not None:
+        args += ["--subset", str(subset)]
     if sandbox_deps_mode is not None:
         args += ["--sandbox-deps-mode", sandbox_deps_mode]
     if timestamp is not None:
@@ -1527,7 +1579,8 @@ TASK_REPO_REQUIRER = "the task repo"
 
 
 def _missing_details(missing: Mapping[str, tuple[str, ...]]) -> str:
-    """Render a missing map as ``name (required by a, b); ...`` for messages."""
+    """Render a missing map as `
+    ame (required by a, b); ...`` for messages."""
     return "; ".join(
         f"{name} (required by {', '.join(requirers)})"
         for name, requirers in sorted(missing.items())
@@ -2001,6 +2054,11 @@ def archive_and_report(
     backend: str,
     sandbox_deps_mode: str | None = None,
     timestamp: str | None = None,
+    *,
+    backend_name: str | None = None,
+    model: str | None = None,
+    experiment: str | None = None,
+    subset: Path | None = None,
 ) -> Path:
     """Phase 8: archive into ``runs/<UTC>/`` and print the report."""
     phase("Phase 8/8 (runbook sec. 7-9): archive + report under runs/")
@@ -2020,6 +2078,10 @@ def archive_and_report(
             backend,
             sandbox_deps_mode,
             timestamp,
+            backend_name=backend_name,
+            model=model,
+            experiment=experiment,
+            subset=subset,
         ),
         what="harness_runs archive",
     )
@@ -2069,6 +2131,8 @@ def run(
     env_file: Path,
     *,
     tasks: Sequence[str] | None = None,
+    subset: str | Path | None = None,
+    experiment: str | None = None,
     allow_partial_wheels: bool = False,
     allow_incomplete_wheels: bool = False,
     repair_sandbox_deps: bool = False,
@@ -2079,17 +2143,30 @@ def run(
     """Execute all eight trial phases and return the archived run directory.
 
     *tasks* holds the ``--tasks`` selector values (repeated or comma-separated);
-    when given they win over ``HARNESS_TRIAL_TASKS`` and are expanded against the
-    ``data/raw/tasks.jsonl`` corpus.
+    *subset* names a committed subset under ``experiments/subsets/`` and wins
+    over every other task source. They are mutually exclusive. The subset and
+    *experiment* are recorded in the archived manifest so two runs can be
+    compared later.
     """
     paths = paths_for(repo_root, results_name)
     check_prerequisites()
     ensure_harness_branch(Path(repo_root))
     env_file_values = load_env_file(env_file)
     requested = tuple(tasks) if tasks else ()
-    corpus = load_corpus_task_ids(paths.tasks_file) if requested else ()
+    if requested and subset is not None:
+        raise TrialError("--subset and --tasks are mutually exclusive")
+    loaded_subset = (
+        load_subset_for_trial(subset, repo_root=Path(repo_root), tasks_file=paths.tasks_file)
+        if subset is not None
+        else None
+    )
+    corpus = load_corpus_task_ids(paths.tasks_file) if (requested or loaded_subset) else ()
     resolution = describe_task_resolution(
-        env_file_values, os.environ, requested=requested, corpus=corpus
+        env_file_values,
+        os.environ,
+        requested=requested,
+        corpus=corpus,
+        subset=loaded_subset,
     )
     note_task_resolution(env_file, resolution)
     task_ids = resolution.task_ids
@@ -2123,6 +2200,10 @@ def run(
         env[HARNESS_MODEL],
         sandbox_deps_mode="repaired" if repair_sandbox_deps else "faithful",
         timestamp=run_id,
+        backend_name=env.get(BACKEND_ENV),
+        model=env[HARNESS_MODEL],
+        experiment=experiment,
+        subset=loaded_subset.path if loaded_subset is not None else None,
     )
 
 
@@ -2203,6 +2284,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Overrides HARNESS_TRIAL_TASKS."
         ),
     )
+    parser.add_argument(
+        "--subset",
+        default=None,
+        metavar="NAME|PATH",
+        help=(
+            "fixed subset under experiments/subsets/ (e.g. dev-v1) or a path to a subset "
+            "JSON; wins over --tasks and HARNESS_TRIAL_TASKS and is recorded in the manifest"
+        ),
+    )
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        help="experiment id recorded in the manifest (experiments/<id>/experiment.json)",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = REPO_ROOT
@@ -2213,6 +2308,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.results_name,
             env_file,
             tasks=args.tasks,
+            subset=args.subset,
+            experiment=args.experiment,
             allow_partial_wheels=args.allow_partial_wheels,
             allow_incomplete_wheels=args.allow_incomplete_wheels,
             repair_sandbox_deps=args.repair_sandbox_deps,

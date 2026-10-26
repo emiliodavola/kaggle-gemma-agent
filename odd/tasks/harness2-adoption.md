@@ -84,12 +84,17 @@ green, and `uv run pytest tests/ -q` with no new failing node id relative to the
 ## Tasks
 
 - [x] T1 - Baseline and tracker. Route: inline. Evidence: `5 failed, 389 passed`; `ruff` clean.
-- [x] T2 - `subsets.py`, `dev-v1.json`, validation tests. Route: inline. Commit: pending.
+- [x] T2 - `subsets.py`, `dev-v1.json`, validation tests. Route: inline. Commit: `c2fe171`.
   Evidence: `uv run python -m kaggle_gemma_agent.subsets validate dev-v1` -> 11 tasks,
   sha256 `a9ba8994...`; `uv run pytest tests/test_subsets.py -q` -> 9 passed; mypy and pyright clean.
-- [ ] T3 - Manifest experiment block, report/STATUS line, archiver flags, tests. Route: inline. Commit: pending.
-- [ ] T4 - Runner `--subset`/`--experiment`, tests. Route: inline. Commit: pending.
-- [ ] T5 - `experiments.py` start/finish/compare, tests, docs and journal entry. Route: inline. Commit: pending (closes Level 0).
+- [x] T3 - Manifest experiment block, report/STATUS line, archiver flags, tests. Route: inline. Commit: `92a14b6`.
+- [x] T4 - Runner `--subset`/`--experiment`, tests. Route: inline. Commit: `92a14b6`.
+  Evidence: focused runner tests 5 passed; `run_host_trial.py --help` lists both flags;
+  full suite `5 failed, 409 passed` (same five baseline node ids).
+- [x] T5 - `experiments.py` start/finish/compare, tests, docs and journal entry. Route: inline. Commit: pending (closes Level 0).
+  Evidence: 12 focused tests; `experiments --help` lists start/finish/show; full suite
+  `5 failed, 421 passed`; `pack submission --check` -> 6/6 + surface + answer leak;
+  journal `J-20261026-07` and `journal OK (46 events)`.
 - [ ] T6 - harness2 fork, adapter patch, `setup.sh`, dry-run validation. Route: inline. Commit: pending.
 - [ ] T7 - Falsifier, 4 rollouts, run analysis, journal entry. Route: inline. Commit: pending (closes Level 1).
 - [ ] T8 - Close: observed results, Risk line, next step.
@@ -112,3 +117,8 @@ green, and `uv run pytest tests/ -q` with no new failing node id relative to the
 - L5 (2026-10-26, design correction): issue #95's 12-method table omits `spec` and `substrate`,
   and `cli/_common.py` has a closed `BENCHES` tuple plus a hardcoded benchmark-to-dependency map
   in `preflight.py`. Level 1 is therefore a versioned patch, not a drop-in adapter.
+- L6 (2026-10-26, Level 0 closed): fixed subset `dev-v1` (11 tasks, sha256 `a9ba8994...`),
+  manifest/report experiment identity, runner `--subset`/`--experiment`, and the
+  `experiments start|finish|show` CLI. Full suite `5 failed, 421 passed` (same five baseline
+  node ids); `pack submission --check` green; journal `J-20261026-07`. `run-reports.md` also
+  gained its missing six-field header while it was being updated.

@@ -708,6 +708,50 @@ def test_build_report_without_manifest_yields_no_sandbox_deps_mode(tmp_path: Pat
 
 
 # --------------------------------------------------------------------------- #
+# experiment identity
+# --------------------------------------------------------------------------- #
+def test_build_report_surfaces_experiment_identity(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "experiment": {
+                    "id": "e1",
+                    "subset": {"id": "dev-v1", "sha256": "a" * 64},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["experiment"]["id"] == "e1"
+    text = run_report.render_summary(report)
+    assert "experiment e1 | subset dev-v1@aaaaaaaa" in text
+    assert len(text.strip().splitlines()) == 8
+
+
+def test_build_report_without_experiment_reports_none(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+
+    report = run_report.build_report(run_dir, environ={}, docker_version="test")
+
+    assert report["experiment"] is None
+    assert "experiment " not in run_report.render_summary(report)
+    assert run_report.load_manifest(run_dir) == {}
+
+
+def test_index_entry_records_experiment_and_subset() -> None:
+    entry = run_report.index_entry(
+        {"run_id": "r", "experiment": {"id": "e1", "subset": {"id": "dev-v1"}}}
+    )
+
+    assert entry["experiment"] == "e1"
+    assert entry["subset"] == "dev-v1"
+
+
+# --------------------------------------------------------------------------- #
 # index
 # --------------------------------------------------------------------------- #
 def test_append_index_and_compaction(tmp_path: Path) -> None:
