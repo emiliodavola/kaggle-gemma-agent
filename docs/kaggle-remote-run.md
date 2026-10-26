@@ -99,8 +99,10 @@ It also sets the switches the official notebook sets: `TRANSFORMERS_OFFLINE`,
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, the LiteLLM quiet flags and
 `OTEL_SDK_DISABLED`.
 
-The wheelhouse is built for CPython 3.12, which matches the GPU notebook image. The
-notebook prints a warning if the session runs another version.
+The wheelhouse is built for CPython 3.12, which matches the scored notebook image.
+The notebook checks every wheel against the running interpreter's tags and stops
+with a clear message when the session uses another Python (for example 3.13):
+switch the notebook image to the Python 3.12 image and restart.
 
 ## Budgets and selection
 
