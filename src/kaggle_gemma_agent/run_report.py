@@ -292,7 +292,7 @@ def _detect_docker_version() -> str:
             timeout=5,
             check=False,
         )
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         return "unknown"
     output = (proc.stdout or proc.stderr).strip()
     return output or "unknown"
