@@ -1,3 +1,12 @@
+---
+Date: 2026-10-26
+Genre: living reference
+Status: current
+Scope: The file-based handoff for an archived run: runs/ layout, report.json schema, STATUS polling, delivery record, manifest provenance and experiment identity. It does not cover scoring or the experiment protocol.
+Source of truth: src/kaggle_gemma_agent/harness_runs.py, src/kaggle_gemma_agent/run_report.py, runs/ (read 2026-10-26)
+Limits: A schema and layout contract, not a run analysis; it attributes nothing to a harness change.
+---
+
 # File-based run reports (`runs/`) — host ↔ Hermes handoff
 
 The `swegemma` harness writes raw artifacts into a `--results-dir` that is
@@ -47,7 +56,8 @@ runs/
 
 `manifest.json` records the archiver inputs: `schema_version`, `created_at`,
 `source_results_dir`, `junit_dir`, `task_count`, the per-task `tasks` list with
-artifact sizes, `sandbox_deps_mode`, and a `provenance` block.
+artifact sizes, `sandbox_deps_mode`, an `experiment` block, and a `provenance`
+block.
 
 `provenance` carries the submission hashes of the moment the run was archived
 (`harness_runs.provenance_hashes`):
@@ -66,6 +76,27 @@ would attach hashes that do not describe it. This mirrors the same caveat the
 journal documents (`docs/journal/README.md`, "Run provenance and re-reporting"):
 the authoritative hashes are the ones captured before the agent started, and an
 old run should not be re-archived to manufacture provenance.
+
+### `experiment` block
+
+A run that was declared part of an experiment records it here; otherwise the
+block is `null`, and a manifest archived before this key existed has no key at
+all (read it as "experiment unknown", never as an unmodified base run).
+
+| Key | Meaning |
+| :--- | :--- |
+| `id` | The experiment id (`experiments/<id>/experiment.json`), or `null` when only a subset was named. |
+| `subset` | `{id, sha256, task_ids, counts}` of the fixed subset, or `null`. |
+| `backend` | The trial backend name (e.g. `lmstudio`), not the served model id. |
+| `model` | The served model id (e.g. `gemma-4-31b-it-qat`). |
+| `budgets` | The per-task budgets the run used. |
+| `task_ids` | The ids the run actually archived. |
+| `subset_missing` | Subset ids the run did not archive; non-empty means the batch is incomplete. |
+| `subset_extra` | Archived ids the subset did not name; non-empty means the run is not the declared batch. |
+
+The block is the run's half of an A/B identity. `kaggle_gemma_agent.experiments
+finish` compares two blocks and refuses the comparison when the subset, backend,
+model, budgets or any provenance hash other than the declared component differs.
 
 ### Skills hash
 
@@ -106,6 +137,7 @@ Top-level keys:
 | `missing_modules` | `list[str]` | Sorted union of every `No module named '...'` module across failing tasks. |
 | `missing_module_tasks` | `object` | `{module: [instance_id, ...]}` mapping each missing module to the sorted ids of the tasks that miss it. |
 | `env` | `object` | Host/backend names — **never credential values** (see §7). |
+| `experiment` | `object` or `null` | The manifest `experiment` block, echoed for readers that never open the manifest. |
 | `budgets` | `object` | Per-task budgets: `tool_calls` 100, `time_minutes` 60, `turns` 500. |
 | `totals` | `object` | `tasks`, `resolved`, `unresolved`, `unknown`, `measured`, `resolution_rate`, `wall_seconds`, `tool_calls`, `turns`, `delivery`. |
 | `summary` | `object` | Echo of `summary.json` (`resolution_rate`, `resolved`, `total`) or `null`s. |
@@ -220,18 +252,23 @@ only `true` and `ran_target_test_unknown` counts only `null`. All six
 ## 3. `STATUS` — the polling signal
 
 `STATUS` is a seven-line text file: the status token, then a fixed six-line
-human summary. Hermes and the host print the **same** text via the `report`
-subcommand.
+human summary. A run that recorded an experiment adds one line after the
+backend line, for eight lines total. Hermes and the host print the **same** text
+via the `report` subcommand.
 
 ```
 DONE
 run 20260930T120000Z | backend muse-spark | docker 27.3.1 | os Linux ...
+experiment e1 | subset dev-v1@a9ba8994
 tasks 1 | resolved 1 | rate 1.000 | unknown 0
 tool_calls 37/100 | wall 13.5/60 min | turns 14/500
 failures 0 | top: none
 delivery submitted 1/1 | scope src_only=1 edits_tests=0 config_only=0 scratch=0 none=0 corrupted=0 | pytest 1 | target 1
 schema 1.0 | report runs/20260930T120000Z/report.json | index runs/index.jsonl
 ```
+
+The experiment line is emitted only when the manifest carries an experiment
+block with an `id`; a run without one keeps the original seven-line shape.
 
 When at least one task failed, the `failures` line also carries the coarse
 causes, e.g. `failures 2 | kinds collection_error=2 | top: fastapi_15588, ...`.
@@ -273,17 +310,20 @@ complete result. `PARTIAL` means *incomplete/corrupt*, not *low score*.
 One JSON object per line, appended when a run is finalized:
 
 ```json
-{"run_id": "20260930T120000Z", "timestamp": "20260930T120000Z", "status": "DONE", "backend": "muse-spark", "tasks": 1, "resolved": 1, "rate": 1.0, "report": "runs/20260930T120000Z/report.json"}
+{"run_id": "20260930T120000Z", "timestamp": "20260930T120000Z", "status": "DONE", "backend": "muse-spark", "tasks": 1, "resolved": 1, "rate": 1.0, "report": "runs/20260930T120000Z/report.json", "experiment": "e1", "subset": "dev-v1"}
 ```
 
-Read the last `N` lines to compare runs without opening every report.
+`experiment` and `subset` are `null` for a run that declared neither. Read the
+last `N` lines to compare runs without opening every report.
 
 ## 5. CLI
 
 ```bash
 # archive a --results-dir into runs/<UTC>/ and write the handoff
 python -m kaggle_gemma_agent.harness_runs archive results/run_01 \
-    --junit-dir junit --tasks tasks.jsonl --backend muse-spark
+    --junit-dir junit --tasks tasks.jsonl --backend muse-spark \
+    --backend-name lmstudio --model gemma-4-31b-it-qat \
+    --experiment e1 --subset dev-v1
 
 # backward-compatible bare form (same as `archive`)
 python -m kaggle_gemma_agent.harness_runs results/run_01 --junit-dir junit
