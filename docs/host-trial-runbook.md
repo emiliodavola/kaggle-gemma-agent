@@ -699,6 +699,38 @@ If you post anything at all, post the `STATUS` block plus the `runs\<UTC>`
 path. Backend, wall time, tool calls, pass/fail, log paths/sizes, and JUnit
 status need no manual transcription — they are already in `report.json`.
 
+### 9.1 Copy the artifacts out of the WSL checkout
+
+A trial that runs inside WSL2 (§1.5) leaves `results/`, `runs/` and the journal
+entries in the distro filesystem, where the Windows-side analysis cannot open
+them directly. `scripts/host-trial/copy_run_artifacts.py` copies exactly those
+three trees, with both repository roots as required arguments:
+
+```powershell
+# from Windows, reading the distro through its UNC share
+uv run python scripts/host-trial/copy_run_artifacts.py `
+    --source "\\wsl.localhost\Ubuntu\home\<you>\kaggle-gemma-agent" `
+    --dest "C:\Users\<you>\Desktop\robotina-data\workspace\kaggle-gemma-agent"
+```
+
+```bash
+# from inside WSL, writing the Windows checkout through /mnt/c
+uv run python scripts/host-trial/copy_run_artifacts.py \
+    --source /home/<you>/kaggle-gemma-agent \
+    --dest /mnt/c/Users/<you>/Desktop/robotina-data/workspace/kaggle-gemma-agent
+```
+
+- The copy is incremental: a file is written only when the destination is
+  missing, its size differs, or the source is newer, and the mtime is preserved,
+  so re-running after a second trial copies only the new run.
+- `--dry-run` prints the same per-tree report (`copied`, `unchanged`, bytes)
+  without writing anything; `--force` recopies every file.
+- A tree the source does not have (for example `results/` before a trial ends)
+  is reported as `not present in source (skipped)` and does not fail the copy.
+- The distro must be running for the `\\wsl.localhost\...` form to resolve. Only
+  `docs/journal/`, `results/` and `runs/` move; `results/` and `runs/` stay
+  git-ignored on both sides.
+
 ## Open TODOs (not verifiable from repo files)
 
 - Sandbox build context (§3).
