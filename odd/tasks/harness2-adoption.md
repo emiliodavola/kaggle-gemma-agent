@@ -95,11 +95,11 @@ green, and `uv run pytest tests/ -q` with no new failing node id relative to the
   Evidence: 12 focused tests; `experiments --help` lists start/finish/show; full suite
   `5 failed, 421 passed`; `pack submission --check` -> 6/6 + surface + answer leak;
   journal `J-20261026-07` and `journal OK (46 events)`.
-- [x] T6 - harness2 fork, adapter patch, `setup.sh`, dry-run validation. Route: inline. Commit: pending.
+- [x] T6 - harness2 fork, adapter patch, `setup.sh`, dry-run validation. Route: inline. Commit: `5e063e0`.
   Evidence: the patch applies cleanly to `1cfe254` on a fresh clone; `python -m
   harness2.cli.check --bench sw --substrate sw` -> `Ready: swegemma/sw; 11 tasks`;
   the dry-run prints 1 task / 1 domain; `validate_tree` returns `pack OK`.
-- [x] T7 - Falsifier, 4 rollouts, run analysis, journal entry. Route: inline. Commit: pending (closes Level 1).
+- [x] T7 - Falsifier, 4 rollouts, run analysis, journal entry. Route: inline. Commit: `5e063e0` (closes Level 1).
   Evidence: PASS (`four_archived`, `fingerprints_differ`, `signal` all true); total
   5 204.30 s; `requests_7315` variant 3 626.02 s / 89 tool calls; result
   `runs/harness2-falsifier/20261026T152738Z.json`; analysis
