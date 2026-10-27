@@ -749,12 +749,33 @@ def _is_config_path(path: str) -> bool:
     )
 
 
-def _is_src_path(path: str) -> bool:
-    """Return whether *path* lives under ``src/``."""
-    return path.startswith("src/")
+def _repo_package(repo: str | None) -> str | None:
+    """Return the package name a ``owner/repo`` slug implies, or ``None``."""
+    if not repo:
+        return None
+    package = repo.split("/")[-1].strip().lower()
+    return package or None
 
 
-def _patch_scope(text: str, files: Sequence[str], malformed: bool) -> str:
+def _is_src_path(path: str, repo: str | None = None) -> bool:
+    """Return whether *path* is repository source.
+
+    Competition repositories use two layouts: a ``src/`` tree, and the package at
+    the repository root (``fastapi/sse.py``, ``rich/console.py``, ...). The
+    package name is derived from the task's ``owner/repo`` slug.
+    """
+    if path.startswith("src/"):
+        return True
+    package = _repo_package(repo)
+    return bool(package) and (path == package or path.startswith(f"{package}/"))
+
+
+def _patch_scope(
+    text: str,
+    files: Sequence[str],
+    malformed: bool,
+    repo: str | None = None,
+) -> str:
     """Classify a patch into exactly one :data:`PATCH_SCOPES` value, first match wins."""
     if not text.strip():
         return "none"
@@ -763,7 +784,7 @@ def _patch_scope(text: str, files: Sequence[str], malformed: bool) -> str:
     if any(_is_test_path(path) for path in files):
         return "edits_tests"
     if any(
-        not _is_src_path(path) and not _is_test_path(path) and not _is_config_path(path)
+        not _is_src_path(path, repo) and not _is_test_path(path) and not _is_config_path(path)
         for path in files
     ):
         return "scratch"
@@ -832,6 +853,7 @@ def _delivery_record(task_dir: Path, meta: Mapping[str, Any] | None) -> dict[str
     """Return the grading-independent delivery record for one archived task."""
     text = _patch_text(task_dir)
     files, malformed = _patch_paths(text)
+    repo = _first(meta, ("repo",)) if meta is not None else None
     facts = _trace_facts(task_dir)
     targets = _target_paths(meta)
     submitted = False
@@ -848,7 +870,7 @@ def _delivery_record(task_dir: Path, meta: Mapping[str, Any] | None) -> dict[str
             ran_target = any(target in command for command in commands for target in targets)
     return {
         "patch_files": files,
-        "patch_scope": _patch_scope(text, files, malformed),
+        "patch_scope": _patch_scope(text, files, malformed, repo),
         "submitted": submitted,
         "ran_pytest": ran_pytest,
         "ran_target_test": ran_target,

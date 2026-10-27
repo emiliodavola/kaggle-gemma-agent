@@ -499,6 +499,33 @@ def test_build_report_delivery_record_and_totals(tmp_path: Path) -> None:
         is None
     )
 
+
+def test_delivery_record_treats_the_repo_package_as_source(tmp_path: Path) -> None:
+    task_dir = tmp_path / "fastapi_15589"
+    task_dir.mkdir()
+    (task_dir / "agent_patch.diff").write_text(
+        "diff --git a/fastapi/dependencies/utils.py b/fastapi/dependencies/utils.py\n",
+        encoding="utf-8",
+    )
+
+    delivery = run_report._delivery_record(task_dir, {"repo": "fastapi/fastapi"})
+
+    assert delivery["patch_files"] == ["fastapi/dependencies/utils.py"]
+    assert delivery["patch_scope"] == "src_only"
+
+
+def test_delivery_record_keeps_a_top_level_script_as_scratch(tmp_path: Path) -> None:
+    task_dir = tmp_path / "fastapi_15588"
+    task_dir.mkdir()
+    (task_dir / "agent_patch.diff").write_text(
+        "diff --git a/repro.py b/repro.py\n",
+        encoding="utf-8",
+    )
+
+    delivery = run_report._delivery_record(task_dir, {"repo": "fastapi/fastapi"})
+
+    assert delivery["patch_scope"] == "scratch"
+
     # The pytest match is a textual mention detector, not a shell parser.
     probe = tmp_path / "probe"
     probe.mkdir()
