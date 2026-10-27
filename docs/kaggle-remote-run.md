@@ -123,11 +123,13 @@ switch the notebook image to the Python 3.12 image and restart.
 
 The notebook reads `submission/eval_config.yaml` — the tuned tree wins. The
 configuration cell can override `MAX_TOOL_CALLS`, `MAX_TIME_MINUTES`,
-`MAX_TURNS` and `COMMAND_TIMEOUT_SECONDS`; `MAX_TIME_MINUTES = 30` is the only
-default override, so the first run fits a session with room for model load.
+`MAX_TURNS` and `COMMAND_TIMEOUT_SECONDS`. All default to `None`, which reads the
+tuned `submission/eval_config.yaml` (100 calls, 60 min, 500 turns); set a value
+only for a deliberately shorter run.
 
-`SUBSET` reads `experiments/subsets/<id>.json`; the default `dev-v1` plus
-`MAX_TASKS = 2` keeps the first run short. `TASK_IDS` overrides the subset.
+`SUBSET` reads `experiments/subsets/<id>.json`; the default `dev-v1` runs all
+11 tasks (`MAX_TASKS = None`). Set `MAX_TASKS` to cap it, or `TASK_IDS` to pick
+explicit ids. The whole 129-task corpus needs sharded runs, not one session.
 
 ## What it produces
 
