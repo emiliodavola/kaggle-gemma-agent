@@ -1486,7 +1486,7 @@ def _requirements_from_pyproject(data: bytes) -> tuple[set[str], set[str]]:
     """Split ``[project]`` deps (core) from optional groups (optional) in TOML bytes."""
     try:
         parsed = tomllib.loads(data.decode("utf-8", errors="replace"))
-    except tomllib.TOMLDecodeError, UnicodeError:
+    except (tomllib.TOMLDecodeError, UnicodeError):
         return set(), set()
     if not isinstance(parsed, dict):
         return set(), set()
@@ -1555,7 +1555,7 @@ def read_repo_requirements(snapshot: Path) -> RepoRequirements:
                     if handle is not None:
                         text = handle.read().decode("utf-8", errors="replace")
                         optional.update(_names_from_requirement_lines(text.splitlines()))
-    except OSError, tarfile.TarError, EOFError:
+    except (OSError, tarfile.TarError, EOFError):
         return RepoRequirements(core=frozenset(), optional=frozenset())
     return RepoRequirements(core=frozenset(core), optional=frozenset(optional))
 

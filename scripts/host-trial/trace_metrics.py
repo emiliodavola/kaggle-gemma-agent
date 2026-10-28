@@ -94,7 +94,7 @@ def metrics_for_task(task_dir: Path) -> TaskMetrics:
         return metrics
     try:
         data = json.loads(trace.read_text(encoding="utf-8"))
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return metrics
 
     commands: list[str] = []
@@ -149,7 +149,7 @@ def load_resolved(run_dir: Path) -> dict[str, bool]:
         return {}
     try:
         data = json.loads(report.read_text(encoding="utf-8"))
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return {}
     resolved: dict[str, bool] = {}
     for task in data.get("tasks", []):

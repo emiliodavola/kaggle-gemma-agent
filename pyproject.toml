@@ -23,7 +23,9 @@ build-backend = "uv_build"
 dev = ["pytest", "ruff", "mypy", "pre-commit", "coverage", "pyright"]
 
 [tool.ruff]
-target-version = "py314"
+# Shipped modules (src/, scripts/) must also parse on the Kaggle notebook image,
+# which can run Python 3.11; tests/test_python_compat.py pins that contract.
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
