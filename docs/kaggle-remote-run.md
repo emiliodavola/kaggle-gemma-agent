@@ -1,10 +1,10 @@
 ---
-Date: 2026-10-26
+Date: 2026-10-28
 Genre: living reference
 Status: current
 Scope: The Kaggle notebook that runs the tuned `submission/` tree remotely: inputs, accelerator, wheelhouse install, vLLM serving, evaluation, artifacts and known limits. It does not cover the host trial (`docs/host-trial-runbook.md`) or the scored submission contract.
-Source of truth: `notebooks/kaggle_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), `data/raw/HARNESS_README.md`, `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py` (read 2026-10-26)
-Limits: The notebook has not been executed on Kaggle yet; its first run is the verification. Kaggle session limits, accelerator availability and the exact model mount are platform facts, not repository facts.
+Source of truth: `notebooks/kaggle_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), `data/raw/HARNESS_README.md`, `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py`, `runs/20261027T140509Z/`, `runs/20261028T031307Z/` (read 2026-10-28)
+Limits: The notebook has been executed on Kaggle (runs 20261027T140509Z and 20261028T031307Z); the 129-task corpus is still sharded across sessions. Kaggle session limits, accelerator availability and the exact model mount are platform facts, not repository facts.
 ---
 
 # Kaggle remote run
@@ -194,6 +194,20 @@ the notebook and copy the exact source slugs from the Add Input dialog:
 ```sh
 kaggle kernels push -p <directory-holding-notebook-and-metadata>
 ```
+
+## Known environment gaps
+
+The shard-0 run (`runs/20261028T031307Z`) hit three `collection_error` tasks:
+`inline_snapshot` is absent from the notebook image, and fastapi's
+`scripts.prepare_release` is not importable from the snapshot. The host-trial
+runbook already records `inline_snapshot` as a gap of the scoring image too;
+staging it locally would make the trial less faithful, not more. They stay
+documented gaps, not local fixes.
+
+The same run hit one `ContextWindowExceededError` (a 16,385-token prompt plus a
+16,384-token output cap) and two 500-turn loops. The tuning branch lowers
+`max_output_tokens` to 12,288 and adds 300/450-turn checkpoints to the system
+prompt and `budget-aware-tool-use`.
 
 ## Known limits
 

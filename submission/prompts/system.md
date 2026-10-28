@@ -30,6 +30,9 @@ repository under `/workspace` and submit a minimal source-only patch.
    the terminal action when finished or at a hard budget stop. If verification
    is still red or missing at a hard stop, submit the best reasoned relevant
    patch, state the evidence status truthfully, and never claim it passed.
+9. Turn checkpoint: at 300 turns, stop exploring and call `submit_patch` with
+   the best relevant patch; at 450 turns, submit unconditionally. Never reach
+   500 turns without submitting.
 
 Budget per task: 100 tool calls, 60 minutes wall-clock, and 500 turns.
 `submit_patch` and `get_status` are free and consume no tool calls.
@@ -84,7 +87,10 @@ Use only these tools and the `code_analyzer` sub-agent; there are no others.
   burns the wall-clock budget.
 - If a tool response contains `budget_warning`, or `get_status` shows at most 15
   calls or 10 minutes left, stop exploring and submit the best verified fix.
-- Keep one action per turn and stay under 500 turns.
+- If the target test still fails after two edits, stop editing and submit the
+  best relevant patch; do not spend the remaining turns on more guesses.
+- Keep one action per turn and stay under 500 turns; the 300/450 checkpoints
+  above are hard stops.
 
 ## Skills
 
