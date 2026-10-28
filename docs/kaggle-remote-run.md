@@ -127,9 +127,10 @@ configuration cell can override `MAX_TOOL_CALLS`, `MAX_TIME_MINUTES`,
 tuned `submission/eval_config.yaml` (100 calls, 60 min, 500 turns); set a value
 only for a deliberately shorter run.
 
-`SUBSET` reads `experiments/subsets/<id>.json`; the default `dev-v1` runs all
-11 tasks (`MAX_TASKS = None`). Set `MAX_TASKS` to cap it, or `TASK_IDS` to pick
-explicit ids. The whole 129-task corpus needs sharded runs, not one session.
+`SUBSET = None` selects the whole 129-task corpus; `SHARD_INDEX`/`NUM_SHARDS`
+slice it into runs that fit a session (12 shards ≈ 11 tasks each). `SUBSET =
+"dev-v1"` keeps the 11-task contrast set. `MAX_TASKS` caps the selection and
+`TASK_IDS` picks explicit ids. One 129-task run does not fit a session.
 
 ## What it produces
 
