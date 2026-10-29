@@ -18,6 +18,8 @@ Load at task start and whenever a loop seems unproductive. Governs call and cont
 - Batch reads; never re-read an unchanged file; prefer `search_similar_code` and `get_code_neighbors`.
 - Stop a failing approach after two attempts.
 - Always submit before exhausting calls.
+- Turn checkpoint: at 300 turns, stop and submit the best relevant patch; at
+  450 turns, submit unconditionally.
 
 ## Execution Steps
 1. Note the approximate call count and the done-condition.
@@ -27,6 +29,7 @@ Load at task start and whenever a loop seems unproductive. Governs call and cont
 5. **Read loop:** if two read-only calls add no new info, stop searching; edit or submit.
 6. **Edit loop:** one edit per hypothesis; if the repro is unchanged, revert and re-diagnose; never stack edits.
 7. Near budget end, prefer a verified partial fix; always submit.
+8. **Turn loop:** at 300 turns, submit the best relevant patch; do not reach 500.
 
 ## Output Contract
 Return the call budget, remaining plan, and the next single action. Never end without a `submit_patch`.

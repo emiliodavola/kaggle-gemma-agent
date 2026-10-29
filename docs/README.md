@@ -82,7 +82,7 @@ to a change carries none.
 | [harness-improvement-protocol.md](harness-improvement-protocol.md) | living reference | current | The protocol a harness change follows: INV/DOM dimensions, evidence citation, KEEP_BASE, one retry, the score-free brief and the composition step. | — | runs/20261009T122847Z/, docs/proposals/20261006-prompt-hardening.md, odd/tasks/88-delivery-record.md, harness2 upstream (read 2026-10-26) | 2026-10-26 |
 | [harness-library/INDEX.md](harness-library/INDEX.md) | experience library | current | Browsable index of cue-keyed lessons, each carrying the harness identity it was learned under. | — | docs/harness-library/, runs/20261009T122847Z/manifest.json (read 2026-10-26) | 2026-10-26 |
 | [host-trial-runbook.md](host-trial-runbook.md) | living reference | current | Operator runbook to run a real swegemma trial on Windows/Docker or Linux/WSL2. | — | scripts/host-trial/run_host_trial.py and the harness contract (read 2026-10-06) | 2026-10-25 |
-| [kaggle-remote-run.md](kaggle-remote-run.md) | living reference | current | The Kaggle notebook that runs the tuned submission remotely: inputs, accelerator, wheelhouse install, vLLM serving parity, Evaluator budgets, artifacts and known limits. | — | notebooks/kaggle_run.ipynb, the official getting-started notebook (local input), data/raw/HARNESS_README.md, data/raw/wheelhouse/, scripts/host-trial/run_host_trial.py (read 2026-10-26) | 2026-10-26 |
+| [kaggle-remote-run.md](kaggle-remote-run.md) | living reference | current | The Kaggle notebook that runs the tuned submission remotely: inputs, accelerator, wheelhouse install, vLLM serving parity, Evaluator budgets, artifacts, environment gaps and known limits. | — | notebooks/kaggle_run.ipynb, the official getting-started notebook (local input), data/raw/HARNESS_README.md, data/raw/wheelhouse/, scripts/host-trial/run_host_trial.py, runs/20261027T140509Z/, runs/20261028T031307Z/ (read 2026-10-28) | 2026-10-28 |
 | [run-reports.md](run-reports.md) | living reference | current | Handoff contract for file-based run reports: runs/ layout, report.json schema, STATUS polling, delivery record, manifest provenance and experiment identity. | — | src/kaggle_gemma_agent/harness_runs.py, run_report.py (read 2026-10-26) | 2026-10-26 |
 | [run-analysis-vocabulary.md](run-analysis-vocabulary.md) | living reference | current | The four verdicts used by every run analysis and proposal, the execution-contrast rule and the claim-record format. | — | AGENTS.md § Change journal, harness2 prompts.py, runs/20261009T122847Z/, runs/20261008T025904Z/ (read 2026-10-26) | 2026-10-26 |
 | [skill-stack-inventory.md](skill-stack-inventory.md) | living reference | current | Inventory of candidate skills (86 items, 8 gaps) with compatibility, dependencies and licenses. | — | upstream SKILL.md files and repo metadata (read 2026-10-06) | 2026-09-28 |
@@ -98,6 +98,7 @@ from here.
 - [cheap-improvement-wins.md](../odd/tasks/cheap-improvement-wins.md)
 - [code-analyzer-subagent.md](../odd/tasks/code-analyzer-subagent.md)
 - [configurable-system-prompt.md](../odd/tasks/configurable-system-prompt.md)
+- [context-window-and-loop-budget.md](../odd/tasks/context-window-and-loop-budget.md)
 - [github-issue-template.md](../odd/tasks/github-issue-template.md)
 - [host-trial-backend-selector.md](../odd/tasks/host-trial-backend-selector.md)
 - [host-trial-deps-integrity.md](../odd/tasks/host-trial-deps-integrity.md)
@@ -118,6 +119,7 @@ from here.
 - [kaggle-remote-run.md](../odd/tasks/kaggle-remote-run.md)
 - [pre-submit-guard-skill.md](../odd/tasks/pre-submit-guard-skill.md)
 - [readme-es-alignment.md](../odd/tasks/readme-es-alignment.md)
+- [run-all-129.md](../odd/tasks/run-all-129.md)
 - [run-report-verdicts.md](../odd/tasks/run-report-verdicts.md)
 - [skills-compaction.md](../odd/tasks/skills-compaction.md)
 - [system-prompt-v3.md](../odd/tasks/system-prompt-v3.md)
