@@ -119,6 +119,7 @@ from here.
 - [kaggle-remote-run.md](../odd/tasks/kaggle-remote-run.md)
 - [pre-submit-guard-skill.md](../odd/tasks/pre-submit-guard-skill.md)
 - [readme-es-alignment.md](../odd/tasks/readme-es-alignment.md)
+- [run-all-129.md](../odd/tasks/run-all-129.md)
 - [run-report-verdicts.md](../odd/tasks/run-report-verdicts.md)
 - [skills-compaction.md](../odd/tasks/skills-compaction.md)
 - [system-prompt-v3.md](../odd/tasks/system-prompt-v3.md)

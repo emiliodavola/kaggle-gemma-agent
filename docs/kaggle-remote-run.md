@@ -127,10 +127,19 @@ configuration cell can override `MAX_TOOL_CALLS`, `MAX_TIME_MINUTES`,
 tuned `submission/eval_config.yaml` (100 calls, 60 min, 500 turns); set a value
 only for a deliberately shorter run.
 
-`SUBSET = None` selects the whole 129-task corpus; `SHARD_INDEX`/`NUM_SHARDS`
-slice it into runs that fit a session (12 shards ≈ 11 tasks each). `SUBSET =
-"dev-v1"` keeps the 11-task contrast set. `MAX_TASKS` caps the selection and
-`TASK_IDS` picks explicit ids. One 129-task run does not fit a session.
+`SUBSET = None` selects the whole 129-task corpus. Two run modes:
+
+- **Single session** (`NUM_SHARDS = None`, `CONCURRENCY = 4`): about 5–9 h of
+  contended wall time. The model and sandboxes are shared, so per-task latency
+  grows and the 60-minute budget includes that contention. It is a quick dev
+  estimate, not the scored condition.
+- **Faithful** (`NUM_SHARDS = 12`, `CONCURRENCY = 1`): about 11 tasks per
+  session at the per-task condition; the corpus takes 2–3 weeks of the weekly
+  GPU quota (30 h, L4x4 at 2x).
+
+The notebook prints an estimate from the observed 16.4 min/task and warns above
+7.5 h. `SUBSET = "dev-v1"` keeps the 11-task contrast set; `MAX_TASKS` caps the
+selection and `TASK_IDS` picks explicit ids.
 
 ## What it produces
 
@@ -219,8 +228,10 @@ prompt and `budget-aware-tool-use`.
   image; a wheel missing here is not necessarily missing at scoring time.
 - Installing the wheelhouse with `--force-reinstall` can replace packages the image
   shipped; that is session-local and does not touch the submission.
-- A two-task run on `dev-v1` is evidence about those tasks, never an estimate of the
-  hidden test set.
+- The 129-task corpus at concurrency 1 is 22–36 h; a single session cannot
+  finish it. Concurrency 4 fits 5.4–8.8 h but changes per-task latency.
+- A run on `dev-v1` or a shard is evidence about those tasks, never an estimate
+  of the hidden test set.
 - The two reference notebooks the comparison used
   (`getting-started-gemma-4-developer-agent.ipynb` and
   `gemma-4-developer-agent-small-model-leaderboard.ipynb`) are Kaggle inputs, not
