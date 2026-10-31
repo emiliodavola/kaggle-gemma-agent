@@ -6,7 +6,7 @@
 #   100 tool calls, 60 minutes wall-clock, 500 turns.
 #   `submit_patch` and `get_status` are free and consume no tool calls.
 name: kaggle_gemma_agent
-model: gemma-4-31b-it-qat-w4a16-ct
+model: gemma-4-e4b-it-qat-w4a16-ct
 # TODO(adapters): add `adapter: <name>` once a PEFT LoRA lands in adapters/<name>/.
 # Adapter binaries are out of scope for this skeleton phase.
 instruction: !include prompts/system.md

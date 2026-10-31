@@ -9,7 +9,9 @@ Compete in the Kaggle **gemma-4-developer-agent** competition (deadline
 evaluated by the `swegemma` harness. The scored metric is **Resolution Rate**:
 the fraction of tasks the agent resolves within the harness budget.
 
-Base model: `gemma-4-31b-it-qat-w4a16-ct`.
+Base model: one of the four permitted quantized variants
+(`gemma-4-31b-it-qat-w4a16-ct` by default, or the 12B / E4B / E2B). The E4B
+baseline run of 2026-10-31 targets the USD 10,000 small-model bonus.
 
 ## Language
 
@@ -179,7 +181,10 @@ It enforces the 6 points from PR #9 (`check_submission` in
 
 - **a** — declarative-only `agent.yaml`; no `agent.py`, no dynamic imports.
 - **b** — 12 skills, each shipping `skills/<dir>/SKILL.md`.
-- **c** — a single base model id (`gemma-4-31b-it-qat-w4a16-ct`).
+- **c** — a single base model id, drawn from the four permitted competition models
+  (`gemma-4-31b-it-qat-w4a16-ct`, `gemma-4-12b-it-qat-w4a16-ct`,
+  `gemma-4-e4b-it-qat-w4a16-ct`, `gemma-4-e2b-it-qat-w4a16-ct`). Every agent in
+  the submission must declare the same one; mixing variants is a violation.
 - **d** — budgets in `eval_config.yaml` within limits (100 calls / 60 min / 500 turns).
 - **e** — no network / pip / MCP / subprocess strings under `submission/`.
 - **f** — packed archive stays **< 3 GiB**.

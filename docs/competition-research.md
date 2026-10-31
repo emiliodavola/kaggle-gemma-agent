@@ -1,10 +1,10 @@
 ---
-Date: 2026-10-06
+Date: 2026-10-31
 Genre: living reference
 Status: current
-Scope: Competition research: the goal, submission format, metric, harness/hardware budgets and LoRA guidance; it does not cover our own run results.
-Source of truth: the Kaggle competition listing and rules pages; read 2026-10-06.
-Limits: research snapshot; platform rules and figures may change.
+Scope: Competition research: the goal, submission format, metric, harness/hardware budgets, permitted models and LoRA guidance; it does not cover our own run results.
+Source of truth: the Kaggle competition listing and rules pages, `Model Selection, Budget, and Harness Rules`, `Evaluation`, `Prizes`, `Upgraded Accelerators` and the data page; read 2026-10-31.
+Limits: research snapshot; platform rules and figures may change. The numbers below are as of 2026-10-31.
 ---
 
 # Gemma 4 Developer Agent — Research report
@@ -48,16 +48,18 @@ Hard rules:
 - Global score = **Resolution Rate** = resolved / total, in [0.0, 1.0].
 - Two-phase isolated cycle: **Container A** (your agent works in `/workspace`, snapshot without future history, offline) → patch extraction (`git add -N . && git diff`) → **Container B** (clean verification: resets tests/configs touched by your patch, applies `test_patch`, runs pytest).
 - Agent limit: **12 hours** for all tasks (includes setup, excludes validation). `eval_config.yaml` allows per-task caps.
-- Watch out!: if your agent modifies tests or configs (`conftest.py`, `pytest.ini`, `pyproject.toml`, etc.), the harness **reverts** them before verifying. You have to fix the library code, not the tests.
+- Hidden test set: "about 120 tasks … evenly divided between the public and private splits" (data page, 2026-10-31); the public split is 58 tasks, so one task is worth 0.017 of the score.
+- Watch out!: since the 2026-10-13 harness, `strip_protected_files_from_patch` removes any hunk touching tests or runner config (`conftest.py`, `pytest.ini`, `pyproject.toml`, `tox.ini`, `setup.cfg`, `*.pth`, …) **from the patch itself**, in both `submit_patch()` and the unsubmitted-diff fallback, and the scorer also resets those paths. You have to fix the library code, not the tests.
 - Watch out 2!: scratch scripts inside `/workspace` (e.g. `repro.py`) **enter the diff**. Use `/tmp` or delete them before `submit_patch()`.
 
 ## 4. Harness, model and budget
 
-- Scoring hardware: **4× NVIDIA L4 (96 GB VRAM)**. vLLM with `tensor_parallel_size=4`, `gpu_memory_utilization=0.80`, `max_model_len=32768`, `enable_lora=True`, `max_loras=8`, `max_lora_rank=128`.
-- **A single base model per submission, mandatory**: `gemma-4-31b-it-qat-w4a16-ct` (QAT INT4 variant, ~16–18 GB). All agents/sub-agents must declare it.
+- Scoring hardware: **4× NVIDIA L4 (96 GB VRAM)**. vLLM with `tensor_parallel_size=4`, `gpu_memory_utilization=0.90` (raised from `0.80` in the 2026-10-13 harness), `max_model_len=32768`, `scheduler_reserve_full_isl=False`. LoRA is right-sized from the submitted adapters (`enable_lora=bool(adapters)`, `max_loras=len(adapters)`, `max_lora_rank=max(detected ranks)`), not fixed at 8/128.
+- **One base model per submission, chosen from four**: `gemma-4-31b-it-qat-w4a16-ct` (~16–18 GB), `gemma-4-12b-it-qat-w4a16-ct` (~6–8 GB), `gemma-4-e4b-it-qat-w4a16-ct` (~3–4 GB), `gemma-4-e2b-it-qat-w4a16-ct` (~2–3 GB). Every agent and subagent must declare the same variant; mixing variants is not possible. Different LoRA adapters per agent are allowed. The 12B needs `--hf-overrides '{"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}'`, which the scorer applies itself. The other aliases in `models.yaml` (`gemma-4-27b-it`, `gemma-4-26b-a4b-it`, `gemma-4-9b-it`, …) are registered for **local CLI evaluation only** and are not permitted in a submission.
 - LoRAs: an agent may use a different adapter (`adapter: main_lora`), up to 8 simultaneous, rank ≤ 128. Budget: rank 16 ≈ 110–220 MB (~8 fit), rank 32 ≈ 220–450 MB (6–8), rank 64 ≈ 450–900 MB (3–6), rank 128 ≈ 0.9–1.8 GB (1–3).
 - Context: **32.768 tokens** ceiling (prompt + thinking + output). Defaults: `max_output_tokens` 16.384, `thinking_budget` 4.096. For vLLM it is better to use `include_thoughts: true + thinking_budget` instead of `thinking_level`.
-- Default budgets (Stage 1 `inference.py`): 60 min per session (container setup is **not** discounted), 100 tool calls, 500 turns, individual command 300 s, output truncated to 5.000 chars, `read_file` to 150 lines / 10.000 chars.
+- Default per-task budgets (Stage 1 `inference.py`): 60 min per session (container setup is **not** discounted), 100 tool calls, 500 turns, individual command 300 s, verification `pytest` 300 s, output truncated to 5.000 chars, `read_file` to 150 lines / 10.000 chars. These are per-task defaults, not the run budget.
+- **Run budget: 12 h for every task of the hidden set**, including sandbox setup and excluding patch validation. With ~120 hidden tasks that is ~6 min per task; the 60-minute default is unusable unless `eval_config.yaml` lowers it.
 - 9 tools: `run_command`, `submit_patch` (free, closes the session when the turn ends), `get_status` (free), `read_file`, `edit_file` (resilient 3-level engine: exact/flexible/regex), `write_file`, `get_code_neighbors`, `search_similar_code` (note: no live embedding server — pass **symbols**, not natural language), `get_code_subgraph`.
 - Anti-truncation: if thinking + tool call exceeds `max_output_tokens`, the `<|tool_call|>` tag is cut and the harness sends nudges (max 3). Small, incremental edits, `thinking_budget` ~4096.
 
@@ -81,13 +83,14 @@ Public training set (at scoring time it is replaced by a hidden test set with th
 
 ## 7. Prizes
 
-Total USD 100.000. This competition USD 65.000: 1st 37.000 / 2nd 18.000 / 3rd 10.000. Paper track USD 35.000. Winners grant an open source license (Apache 2.0) for the submission.
+Total USD 110.000 (as of 2026-10-31). This competition USD 65.000: 1st 37.000 / 2nd 18.000 / 3rd 10.000. Paper track USD 35.000. **Bonus USD 10.000** to the highest private score that uses `gemma-4-e2b-it-qat-w4a16-ct` or `gemma-4-e4b-it-qat-w4a16-ct`; the submission must be one of the team's two selected finals and stays eligible for the general leaderboard. Winners grant an open source license (Apache 2.0) for the submission.
 
 ## 8. Rules that matter
 
 - Teams of up to 5; mergers allow up to the cap of accumulated submissions.
 - Standard Kaggle eligibility (18+, no sanctions/export-control).
 - Data: commercial use permitted under Apache 2.0, but do not redistribute to non-participants.
+- **L4 sessions must have internet disabled** (*Upgraded Accelerators*). Circumventing it can be enforced by moderation, up to a team or account ban. L4x4 also consumes GPU quota at twice the T4x2/P100 rate.
 
 ## 9. Risks and next steps
 
@@ -95,7 +98,7 @@ Risks:
 1. Short window and 1 submission/day → every submission counts; validate locally with `swegemma eval` first.
 2. 32k context + tool call truncation → compact prompts, analyzer sub-agent (`AgentTool`, `skip_summarization`) so as not to burn the coder's window.
 3. `search_similar_code` offline by symbol key → it does not work with natural-language questions.
-4. Current leaderboard low (top ~0.15): there is room, but the hidden test set may be harder.
+4. Leaderboard on 2026-10-31: top 0.29 (Yurnero), the next fifteen teams 0.22-0.24, 4,269 teams. The hidden test set may be harder than the public corpus.
 
 Proposed next steps:
 1. Download the full dataset (`tasks.jsonl` + snapshots + graphs) and count its size.
@@ -103,12 +106,15 @@ Proposed next steps:
 3. Measure local resolution and consumption (tool calls, time) → define `eval_config.yaml`.
 4. Only after that: serious prompt engineering and, if needed, LoRA rank 16–32 on the coder.
 
-## 10. Verification (real outputs from this session)
+## 10. Verification (real outputs, read 2026-10-31)
 
-- `kaggle competitions list --search gemma-4-developer-agent` → detects both, main with deadline 2026-12-02, 65.000 USD, 502 teams, `userHasEntered True`.
-- `competitions files` → `HARNESS_README.md` (49.356 B) + `docker/` (4 files) + hundreds of `embeddings/*.npz` (~4–6 MB each).
-- `competitions pages` → 9 pages: data-description, Description, Evaluation, rules, abstract, Timeline, foundational-rules, Prizes, Model Selection Budget and Harness Rules.
-- `competitions pages list --content --page-name <p>` (with `config set competition`) → full content of the 9 (total ~52 KB).
-- `competitions leaderboard --show` → top Makus 0.15 (26-sep-2026).
-- `competitions submission-limits` → 0 submissions today and lifetime, 1 left today.
-- Downloads OK: `HARNESS_README.md`, `Dockerfile.public/sandbox`, `imp.py` (telnetlib.py of 23 KB was left pending, it is only a shim).
+- `kaggle competitions list --search gemma-4-developer-agent` -> both tracks; main deadline 2026-12-02, reward shown as 75,000 USD (65,000 + the 10,000 bonus), 4,269 teams, `userHasEntered True`.
+- `kaggle competitions pages list` -> 10 pages, including the new `Upgraded Accelerators` one (the 2026-10-06 snapshot had 9).
+- `Model Selection, Budget, and Harness Rules` -> four permitted models; the 12B override; LoRA per agent allowed.
+- `Evaluation` -> 12 hours for all tasks, including sandbox setup, excluding validation.
+- `data-description` -> ~120 hidden tasks, evenly split public/private; 129 public development tasks.
+- `Prizes` -> 110,000 USD total: 65,000 main, 35,000 paper track, 10,000 small-model bonus (E2B/E4B).
+- `competitions files` -> `HARNESS_README.md` 55,940 B dated 2026-10-13 (our local copy was 49,356 B dated 2026-10-01); `docker/` 4 files dated 2026-10-13.
+- `competitions submission-limits` -> 0 submitted today, 1 lifetime submission, 1 remaining today.
+- `competitions submissions` -> one submission (57718689, 2026-10-28), `COMPLETE`, no public score: *"Your submission notebook exceeded the allowed runtime."*
+- `kaggle models variations get google/gemma-4/other/gemma-4-e4b-it-qat-w4a16-ct` -> version 2, 11,546,103,780 uncompressed bytes.
