@@ -65,6 +65,19 @@ FORBIDDEN_NAMES = frozenset({"agent.py"})
 # Competition contract, traceable to ``AGENTS.md`` and
 # ``docs/skill-stack-inventory.md`` section A (see PR #9 compliance table).
 REQUIRED_SKILLS = 12
+# The four quantized competition models ("Model Selection, Budget, and Harness
+# Rules", read 2026-10-31). A submission declares exactly one of them and every
+# agent in it must use that same variant; mixing variants is a violation.
+ALLOWED_MODELS = frozenset(
+    {
+        "gemma-4-31b-it-qat-w4a16-ct",
+        "gemma-4-12b-it-qat-w4a16-ct",
+        "gemma-4-e4b-it-qat-w4a16-ct",
+        "gemma-4-e2b-it-qat-w4a16-ct",
+    }
+)
+#: Starter-kit default, and the model the shipped ``submission/`` used until the
+#: 2026-10-31 E4B baseline run. Kept because tests and messages name it.
 EXPECTED_MODEL = "gemma-4-31b-it-qat-w4a16-ct"
 MAX_TOOL_CALLS = 100
 MAX_TIME_MINUTES = 60
@@ -264,7 +277,7 @@ def _check_skills(source_dir: Path, violations: list[str]) -> None:
 
 
 def _check_model(files: Sequence[Path], violations: list[str]) -> None:
-    """Rule c: a single base model id, and the expected one."""
+    """Rule c: a single base model id, drawn from the permitted set."""
     model_ids: set[str] = set()
     for path in files:
         if path.suffix in {".yaml", ".yml"}:
@@ -275,9 +288,13 @@ def _check_model(files: Sequence[Path], violations: list[str]) -> None:
     if len(model_ids) != 1:
         found = ", ".join(sorted(model_ids)) or "none"
         violations.append(f"model: expected exactly one base model id, found [{found}] (rule c)")
-    elif next(iter(model_ids)) != EXPECTED_MODEL:
+        return
+    declared = next(iter(model_ids))
+    if declared not in ALLOWED_MODELS:
+        allowed = ", ".join(sorted(ALLOWED_MODELS))
         violations.append(
-            f"model: expected '{EXPECTED_MODEL}', found '{next(iter(model_ids))}' (rule c)"
+            f"model: '{declared}' is not a permitted competition model; "
+            f"expected one of [{allowed}] (rule c)"
         )
 
 

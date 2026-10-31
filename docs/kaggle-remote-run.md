@@ -3,8 +3,8 @@ Date: 2026-10-28
 Genre: living reference
 Status: current
 Scope: The Kaggle notebook that runs the tuned `submission/` tree remotely: inputs, accelerator, wheelhouse install, vLLM serving, evaluation, artifacts and known limits. It does not cover the host trial (`docs/host-trial-runbook.md`) or the scored submission contract.
-Source of truth: `notebooks/kaggle_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), `data/raw/HARNESS_README.md`, `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py`, `runs/20261027T140509Z/`, `runs/20261028T031307Z/` (read 2026-10-28)
-Limits: The notebook has been executed on Kaggle (runs 20261027T140509Z and 20261028T031307Z); the 129-task corpus is still sharded across sessions. Kaggle session limits, accelerator availability and the exact model mount are platform facts, not repository facts.
+Source of truth: `notebooks/kaggle_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), the competition's *Model Selection, Budget, and Harness Rules* and *Upgraded Accelerators* pages, `data/raw/HARNESS_README.md` (the 2026-10-13 competition copy), `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py`, `runs/20261027T140509Z/`, `runs/20261028T031307Z/` (read 2026-10-31)
+Limits: The 31B notebook has been executed on Kaggle (runs 20261027T140509Z and 20261028T031307Z); the E4B baseline of 2026-10-31 is the first small-model run. The 129-task corpus is still sharded across sessions. Kaggle session limits, accelerator availability and the exact model mount are platform facts, not repository facts.
 ---
 
 # Kaggle remote run
@@ -62,7 +62,13 @@ validates the selected tasks and names any missing snapshot.
 ## Offline on L4 (required)
 
 The competition's **Upgraded Accelerators** page states: *"No Internet - All L4
-sessions must have internet disabled."* The notebook probes GitHub once:
+sessions must have internet disabled."* That is a rule, not a preference: the
+same page says attempts to circumvent it may be enforced by Kaggle moderation,
+including team and account bans. Every L4 run is therefore `enable_internet:
+false`, and the repository arrives as the attached code dataset.
+
+The notebook probes GitHub once anyway, so the same file still runs on a machine
+that allows internet:
 
 - **Online** (CPU/T4 or a local host): it clones `REPO_URL` at `REPO_REF`.
 - **Offline** (L4): it looks for an attached dataset holding `submission/` and
@@ -78,22 +84,45 @@ offline it prints a warning instead.
 - **Accelerator:** `GPU L4 x4`. The notebook uses every visible GPU
   (`tensor_parallel_size` 4 / 2 / 1) and mirrors the scoring flags:
   `tool_call_parser=gemma4`, `reasoning_parser=gemma4`, `max_model_len=32768`,
-  `gpu_memory_utilization=0.80`. The official getting-started notebook uses `0.90`;
-  `0.80` is the value `data/raw/HARNESS_README.md` documents for scoring.
+  `gpu_memory_utilization=0.90`, `scheduler_reserve_full_isl=False`. `0.90` is
+  the value the 2026-10-13 `HARNESS_README.md` documents for scoring and the one
+  the official getting-started notebook uses; the earlier `0.80` came from the
+  stale 2026-10-01 copy.
   `GPU T4 x2` is not representative and the W4A16 checkpoint may not load on Turing.
-- **Internet:** `On`. The notebook clones the repository and installs the
-  wheelhouse.
+- **Internet:** `Off`, required on L4 (see above). The repository comes from the
+  attached code dataset and the wheelhouse installs offline.
 - **Secrets:** only for `MODEL_BACKEND = "api"`; add `OPENAI_API_KEY`. The default
   `local` backend needs no secret.
 
 ## Model support
 
-The submission's `agent.yaml` decides the model; the notebook never hard-codes it.
-The four competition models are accepted: `gemma-4-31b-it-qat-w4a16-ct`,
-`gemma-4-12b-it-qat-w4a16-ct`, `gemma-4-e4b-it-qat-w4a16-ct` and
-`gemma-4-e2b-it-qat-w4a16-ct`. The 12B variant needs
-`--hf-overrides '{"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}'`,
-which the notebook adds automatically.
+The submission's `agent.yaml` decides the model. The four competition models are
+accepted: `gemma-4-31b-it-qat-w4a16-ct`, `gemma-4-12b-it-qat-w4a16-ct`,
+`gemma-4-e4b-it-qat-w4a16-ct` and `gemma-4-e2b-it-qat-w4a16-ct`. The 12B variant
+needs `--hf-overrides '{"architectures": ["Gemma4ForCausalLM"], "model_type":
+"gemma4"}'`, which the notebook adds automatically; the E4B needs no override.
+
+The config cell also pins `EXPECTED_MODEL`. Before the server starts, the
+notebook aborts when `agent.yaml` declares anything else, so a stale code dataset
+cannot silently measure the wrong model and label the artifacts with the right
+one. A 31B run therefore needs both the model source in the kernel metadata and
+switched YAMLs in the dataset, or it stops in seconds instead of hours later.
+
+## Model preflight
+
+Starting vLLM is not proof that the run will work. After the server is up the
+notebook runs three checks before the first task, because a broken parser costs
+minutes here and the whole session later:
+
+1. `/v1/models` answers. vLLM serves the **weights path** as the model id unless
+   a served-model name is passed, so the preflight reads the id from the server
+   instead of assuming the declared alias.
+2. One short chat completion returns non-empty text.
+3. One tool-call round trip returns a call whose `arguments` parse as JSON, with
+   one retry. A parser that cannot emit a tool call fails every task, and the E4B
+   tool-call parser has a reported hang on array arguments (discussion 753973).
+
+Any of the three failing aborts the run with a named reason.
 
 LoRA adapters under `submission/adapters/` are discovered and passed to the vLLM
 server and the evaluator. The shipped tree has none today; an adapter run also needs
@@ -123,9 +152,18 @@ switch the notebook image to the Python 3.12 image and restart.
 
 The notebook reads `submission/eval_config.yaml` — the tuned tree wins. The
 configuration cell can override `MAX_TOOL_CALLS`, `MAX_TIME_MINUTES`,
-`MAX_TURNS` and `COMMAND_TIMEOUT_SECONDS`. All default to `None`, which reads the
-tuned `submission/eval_config.yaml` (100 calls, 60 min, 500 turns); set a value
-only for a deliberately shorter run.
+`MAX_TURNS` and `COMMAND_TIMEOUT_SECONDS`. `MAX_TOOL_CALLS`, `MAX_TURNS` and
+`COMMAND_TIMEOUT_SECONDS` default to `None`, which reads the tuned
+`submission/eval_config.yaml` (100 calls, 60 min, 500 turns). `MAX_TIME_MINUTES`
+is `18.0` for the E4B baseline: the scored budget is 12 h for the whole corpus,
+so a 60-minute per-task cap cannot be the run's cap.
+
+The evaluation cell also refuses to start when the worst case
+`tasks x max_time_minutes / concurrency` exceeds `MAX_WORST_CASE_HOURS` (10.5 h); at 129 tasks, 18 minutes and concurrency 4 the
+worst case is 9.7 h, which leaves room for setup and the archive.
+A 12 h session that dies mid-flight never reaches the archive cell, so the guard
+trades a longer run for a complete one. Lower `MAX_TIME_MINUTES`, raise
+`CONCURRENCY` or shard the corpus to fit.
 
 `SUBSET = None` selects the whole 129-task corpus. Two run modes:
 
@@ -176,33 +214,69 @@ Import Notebook**, set the accelerator and internet switches, attach the three
 inputs, then **Run all**.
 
 To push it from the command line, create a `kernel-metadata.json` beside a copy of
-the notebook and copy the exact source slugs from the Add Input dialog:
+the notebook. This is the metadata of the last working push
+(`kaggle kernels pull <user>/<kernel> -m`), with the model source switched:
 
 ```json
 {
-  "id": "<kaggle-user>/kaggle-remote-run",
-  "title": "kaggle-remote-run",
+  "id": "bistiarj/gemma-e4b-baseline",
+  "title": "gemma-e4b-baseline",
   "code_file": "kaggle_run.ipynb",
   "language": "python",
   "kernel_type": "notebook",
   "is_private": true,
   "enable_gpu": true,
-  "enable_internet": true,
+  "enable_internet": false,
   "dataset_sources": [
-    "metric/gemma-4-developer-agent-wheelhouse"
+    "metric/gemma-4-developer-agent-wheelhouse",
+    "bistiarj/kaggle-gemma-agent-code"
   ],
   "competition_sources": [
     "gemma-4-developer-agent"
   ],
   "model_sources": [
-    "google/gemma-4/other/gemma-4-31b-it-qat-w4a16-ct/<version>"
-  ]
+    "google/gemma-4/Other/gemma-4-e4b-it-qat-w4a16-ct/2"
+  ],
+  "machine_shape": "NvidiaL4",
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:37c64f7dd9c54116ecd1bcc88817c5469b88387388fade02bfa8bf3fc647d461"
 }
 ```
+
+The `docker_image` pins the Python 3.12 image the wheelhouse is built for; without
+it a later default image can be 3.13 and the wheel-tag check stops the run.
+`machine_shape: NvidiaL4` is what makes the session a 4×L4 GPU session.
 
 ```sh
 kaggle kernels push -p <directory-holding-notebook-and-metadata>
 ```
+
+## Refreshing the attached code dataset
+
+Offline runs read `submission/`, `src/`, `experiments/subsets/` and a `COMMIT`
+file from `bistiarj/kaggle-gemma-agent-code`, so a branch that changes the
+submission is invisible to Kaggle until the dataset is versioned:
+
+```sh
+# 1. stage exactly what the notebook reads
+uv run python - <<'PY'
+import pathlib, shutil
+stage = pathlib.Path("./tmp/kaggle-code-dataset")
+shutil.rmtree(stage, ignore_errors=True)
+for name in ("submission", "src"):
+    shutil.copytree(name, stage / name)
+(stage / "experiments" / "subsets").mkdir(parents=True)
+shutil.copy("experiments/subsets/dev-v1.json", stage / "experiments" / "subsets")
+PY
+
+# 2. record the commit the dataset was built from
+git rev-parse HEAD > tmp/kaggle-code-dataset/COMMIT
+
+# 3. publish a new version
+kaggle datasets version -p tmp/kaggle-code-dataset -m "E4B baseline: <commit>"
+```
+
+Check the result with `kaggle datasets files bistiarj/kaggle-gemma-agent-code`:
+`submission/agent.yaml` must declare the model the notebook expects.
 
 ## Known environment gaps
 
