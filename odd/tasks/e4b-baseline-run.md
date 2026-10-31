@@ -48,14 +48,14 @@ competition submission: the user selects it manually.
 
 ## Tasks
 
-- [ ] T1 (S2) — `pack.py` rule c accepts the four models; tests cover accept, reject and mixed.
-- [ ] T2 (S1) — both submission YAMLs declare E4B.
-- [ ] T3 (S3, S4) — notebook: expected-model assert, preflight smoke, 0.90, clock guard, provenance.
-- [ ] T4 (S5) — offline repo dataset refreshed from the branch, `COMMIT` written.
-- [ ] T5 (S6) — docs (`kaggle-remote-run.md`, `competition-research.md`, `AGENTS.md` rule c) and the journal entry.
-- [ ] T6 — full test suite green; every notebook code cell compiles.
-- [ ] T7 — kernel pushed and launched on Kaggle (L4 x4, internet off).
-- [ ] T8 — PR opened and assigned to `emiliodavola`.
+- [x] T1 (S2) — `pack.py` rule c accepts the four models; tests cover accept, reject and mixed.
+- [x] T2 (S1) — both submission YAMLs declare E4B.
+- [x] T3 (S3, S4) — notebook: expected-model assert, preflight smoke, 0.90, clock guard, provenance.
+- [x] T4 (S5) — offline repo dataset refreshed from the branch, `COMMIT` written.
+- [x] T5 (S6) — docs (`kaggle-remote-run.md`, `competition-research.md`, `AGENTS.md` rule c) and the journal entry.
+- [x] T6 — full test suite green; every notebook code cell compiles.
+- [x] T7 — kernel pushed and launched on Kaggle (L4 x4, internet off).
+- [x] T8 — PR opened and assigned to `emiliodavola`.
 
 ## Log
 
@@ -89,3 +89,21 @@ tuned tree, so the E4B number is comparable with `runs/20261027T140509Z` (31B,
 The corpus stays the full 129 tasks at concurrency 4, which the earlier quota
 math puts at 5.4–8.8 h for the 31B; the clock guard is what makes it safe for a
 model we have never measured.
+
+**L4 — Implementation (2026-10-31).** Rule c now accepts the four permitted
+models (`ALLOWED_MODELS`); `submission/` declares the E4B in both manifests;
+the notebook pins `EXPECTED_MODEL`, preflights the served model, uses
+`gpu_memory_utilization=0.90` and refuses to start above a 10.5 h worst case.
+`tests/test_kaggle_notebook.py` pins the notebook invariants. Full suite:
+471 passed, 5 failed, and the same five fail on `origin/main` (Windows path
+separators and CRLF); ruff, mypy, pyright and `pack submission --check` are
+clean.
+
+**L5 — Launch (2026-10-31).** Code dataset re-versioned twice: the first attempt
+used `--dir-mode skip` and uploaded only `COMMIT`, the second used `-r tar` and
+produced the expected tree (verified by downloading `submission/agent.yaml` and
+`COMMIT`). Kernel `bistiarj/gemma-e4b-baseline` version 1 pushed with
+`enable_internet: false`, `machine_shape: NvidiaL4` and the pinned Python 3.12
+image; status `RUNNING` 20 minutes later. Corpus: 129 tasks, concurrency 4,
+18-minute per-task cap (9.7 h worst case). The outcome is not yet known and is
+the next entry.
