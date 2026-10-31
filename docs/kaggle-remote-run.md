@@ -155,11 +155,12 @@ configuration cell can override `MAX_TOOL_CALLS`, `MAX_TIME_MINUTES`,
 `MAX_TURNS` and `COMMAND_TIMEOUT_SECONDS`. `MAX_TOOL_CALLS`, `MAX_TURNS` and
 `COMMAND_TIMEOUT_SECONDS` default to `None`, which reads the tuned
 `submission/eval_config.yaml` (100 calls, 60 min, 500 turns). `MAX_TIME_MINUTES`
-is `20.0` for the E4B baseline: the scored budget is 12 h for the whole corpus,
+is `18.0` for the E4B baseline: the scored budget is 12 h for the whole corpus,
 so a 60-minute per-task cap cannot be the run's cap.
 
 The evaluation cell also refuses to start when the worst case
-`tasks x max_time_minutes / concurrency` exceeds `MAX_WORST_CASE_HOURS` (10.5 h).
+`tasks x max_time_minutes / concurrency` exceeds `MAX_WORST_CASE_HOURS` (10.5 h); at 129 tasks, 18 minutes and concurrency 4 the
+worst case is 9.7 h, which leaves room for setup and the archive.
 A 12 h session that dies mid-flight never reaches the archive cell, so the guard
 trades a longer run for a complete one. Lower `MAX_TIME_MINUTES`, raise
 `CONCURRENCY` or shard the corpus to fit.
