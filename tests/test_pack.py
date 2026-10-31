@@ -203,11 +203,42 @@ def test_check_flags_absent_skill_stack(tmp_path: Path) -> None:
 
 def test_check_flags_wrong_model(tmp_path: Path) -> None:
     source = _make_compliant_source(tmp_path)
-    (source / pack.AGENT_MANIFEST).write_text("model: not-the-expected-model\n", encoding="utf-8")
+    source_manifest = source / pack.AGENT_MANIFEST
+    source_manifest.write_text("model: gemma-4-27b-it\n", encoding="utf-8")
 
     violations = pack.check_submission(source)
 
-    assert any("expected" in v and pack.EXPECTED_MODEL in v and "rule c" in v for v in violations)
+    assert any(
+        "not a permitted competition model" in v and "gemma-4-27b-it" in v for v in violations
+    )
+    assert any("rule c" in v for v in violations)
+
+
+@pytest.mark.parametrize("model_id", sorted(pack.ALLOWED_MODELS))
+def test_check_accepts_each_permitted_model(tmp_path: Path, model_id: str) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.AGENT_MANIFEST).write_text(f"name: demo\nmodel: {model_id}\n", encoding="utf-8")
+    (source / "sub_agents").mkdir()
+    (source / "sub_agents" / "analyzer.yaml").write_text(
+        f"name: analyzer\nmodel: {model_id}\n", encoding="utf-8"
+    )
+
+    assert pack.check_submission(source) == []
+
+
+def test_check_flags_mixed_permitted_models(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / pack.AGENT_MANIFEST).write_text(
+        "name: demo\nmodel: gemma-4-31b-it-qat-w4a16-ct\n", encoding="utf-8"
+    )
+    (source / "sub_agents").mkdir()
+    (source / "sub_agents" / "analyzer.yaml").write_text(
+        "name: analyzer\nmodel: gemma-4-e4b-it-qat-w4a16-ct\n", encoding="utf-8"
+    )
+
+    violations = pack.check_submission(source)
+
+    assert any("exactly one base model id" in v and "rule c" in v for v in violations)
 
 
 def test_check_flags_missing_eval_config(tmp_path: Path) -> None:

@@ -5,11 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from kaggle_gemma_agent import pack
+
 SUBMISSION = Path(__file__).resolve().parents[1] / "submission"
 AGENT = SUBMISSION / "agent.yaml"
 ANALYZER_YAML = SUBMISSION / "sub_agents" / "code_analyzer.yaml"
 ANALYZER_PROMPT = SUBMISSION / "prompts" / "analyzer.md"
-EXPECTED_MODEL = "gemma-4-31b-it-qat-w4a16-ct"
 ANALYZER_TOOLS = ("read_file", "search_similar_code", "get_code_neighbors", "get_code_subgraph")
 MAX_PROMPT_LINES = 30
 FORBIDDEN = re.compile(
@@ -28,8 +29,13 @@ def test_agent_keeps_skip_summarization() -> None:
 
 def test_analyzer_declares_expected_tools_and_model() -> None:
     text = ANALYZER_YAML.read_text(encoding="utf-8")
+    root = AGENT.read_text(encoding="utf-8")
 
-    assert f"model: {EXPECTED_MODEL}" in text
+    analyzer_model = re.search(r"^\s*model:\s*(\S+)", text, flags=re.MULTILINE)
+    root_model = re.search(r"^\s*model:\s*(\S+)", root, flags=re.MULTILINE)
+    assert analyzer_model and root_model, "both manifests must declare a model"
+    assert analyzer_model.group(1) in pack.ALLOWED_MODELS
+    assert analyzer_model.group(1) == root_model.group(1), "one submission, one base model"
     for tool in ANALYZER_TOOLS:
         assert f"- {tool}" in text, f"analyzer missing tool {tool}"
     assert "instruction: !include ../prompts/analyzer.md" in text
