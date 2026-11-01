@@ -2,6 +2,20 @@
 
 Operating guide for anyone (human or AI) working in this repository.
 
+## Integration rule: `main` changes only through a pull request
+
+`main` is the delivered line: **nothing is ever pushed to it directly**, and
+every change reaches it through a feature branch and a merged pull request — a
+four-line documentation fix, a typo, a revert and a hotfix included. There is no
+emergency path and no size exception; "it is only one line" is not a reason, and
+a passing local run is not a substitute for the PR.
+
+A commit that lands on `main` without a PR is a process defect, not a shortcut:
+do not build on top of it. Open a branch, revert it there, and re-land the same
+change on its own branch through a PR. The merge strategy is free — squash,
+merge commit or rebase — because what this rule forbids is the push, never the
+merge.
+
 ## Goal
 
 Compete in the Kaggle **gemma-4-developer-agent** competition (deadline
@@ -284,7 +298,9 @@ Load a skill only when the task genuinely matches its trigger.
 
 ## Git rules
 
-- Never commit directly to `main`. Work on feature branches.
+- Never commit directly to `main`, and never push to it. Work on feature
+  branches: every change travels branch → PR → review → merge, and a merged PR
+  is the only way a commit reaches `main`.
 - Branch naming: `docs/...`, `feat/...`, `fix/...`, `chore/...`.
 - Open PRs against `main`.
 - PR descriptions must include **real command outputs** for verification, not
@@ -293,7 +309,6 @@ Load a skill only when the task genuinely matches its trigger.
   Verification with pasted output, Files changed, Design artifacts,
   Checklist) — no free-form bodies.
 - **Emilio merges.** Do not merge your own PR.
-- Never push to `main`.
 - Do not add AI attribution / `Co-Authored-By` trailers; use conventional
   commit messages.
 
