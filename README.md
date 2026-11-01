@@ -5,7 +5,8 @@ Developer/coding agent for the Kaggle **gemma-4-developer-agent** competition
 `swegemma` harness; the scored metric is **Resolution Rate** on a per-task
 budget of **60 minutes** and **100 tool calls**.
 
-Base model: `gemma-4-31b-it-qat-w4a16-ct`.
+Base model: one of the four permitted quantized Gemma 4 variants (`gemma-4-31b`, `12b`, `e4b`, `e2b`). The shipped `submission/` currently
+targets `gemma-4-e4b-it-qat-w4a16-ct`.
 
 ## Quickstart
 
@@ -35,6 +36,7 @@ Kaggle API docs: <https://www.kaggle.com/docs/api>. Never commit the token.
 ├── README.md               # this file
 ├── README_ES.md            # Spanish translation of this file
 ├── docs/                   # documentation (index: docs/README.md)
+├── notebooks/            # Kaggle remote-run notebooks, one per base model
 ├── odd/tasks/              # per-feature tracker (goal, tasks, evidence)
 ├── scripts/host-trial/     # cross-platform host trial runner
 ├── src/kaggle_gemma_agent/ # submission packer, harness runs, run reports
@@ -69,6 +71,22 @@ Local-only paths (`data/`, `runs/`, `tmp/`, `.agents/`) are git-ignored.
   kaggle_gemma_agent.journal add|render|list|validate`; a PR touching
   `submission/`, `docs/`, `scripts/host-trial/`, `harness_runs.py` or
   `run_report.py` must carry an entry. See `docs/journal/README.md`.
+
+## Remote runs
+
+The remote evaluation lives in two notebooks that differ only in the base model
+they pin; `tests/test_kaggle_notebook.py` fails when they drift apart.
+
+| Notebook | Pins | Kaggle kernel |
+|----------|------|---------------|
+| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/kaggle-run` |
+| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-e4b-baseline` |
+
+Both install the competition wheelhouse offline, serve the checkpoint with vLLM,
+run `swegemma`'s `Evaluator` over the public corpus, preflight the served model
+before the first task, refuse to start when the worst case does not fit a Kaggle
+session, and archive the artifacts into a `runs/<UTC>/` handoff. L4 sessions must
+run with internet disabled. See `docs/kaggle-remote-run.md`.
 
 ## Compliance gate
 

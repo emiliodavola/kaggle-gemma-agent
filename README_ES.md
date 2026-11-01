@@ -6,7 +6,8 @@ y se evalúa con el harness `swegemma`; la métrica puntuada es la **Resolution
 Rate** sobre un presupuesto por tarea de **60 minutos** y **100 llamadas a
 herramientas**.
 
-Modelo base: `gemma-4-31b-it-qat-w4a16-ct`.
+Modelo base: una de las cuatro variantes cuantizadas permitidas de Gemma 4 (`gemma-4-31b`, `12b`, `e4b`, `e2b`). El `submission/` enviado apunta
+actualmente a `gemma-4-e4b-it-qat-w4a16-ct`.
 
 ## Inicio rápido
 
@@ -37,6 +38,7 @@ subas el token al repositorio.
 ├── README.md               # versión en inglés de este archivo
 ├── README_ES.md            # este archivo
 ├── docs/                   # notas, contratos, runbook y reportes de la competencia
+├── notebooks/            # notebooks de corrida remota en Kaggle, una por modelo base
 ├── odd/tasks/              # tracker por feature (objetivo, tareas, evidencia)
 ├── scripts/host-trial/     # runner multiplataforma del host trial
 ├── src/kaggle_gemma_agent/ # packer del submission, harness runs, run reports
@@ -69,6 +71,23 @@ por git.
 - **Host trial** (`scripts/host-trial/run_host_trial.py`): el host trial de ocho
   fases; ver `docs/host-trial-runbook.md`.
 - **Skills**: 12 skills en `submission/skills/` (un `SKILL.md` cada una).
+
+## Corridas remotas
+
+La evaluación remota vive en dos notebooks que solo difieren en el modelo base
+que fijan; `tests/test_kaggle_notebook.py` falla si se desincronizan.
+
+| Notebook | Fija | Kernel de Kaggle |
+|----------|------|------------------|
+| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/kaggle-run` |
+| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-e4b-baseline` |
+
+Ambos instalan el wheelhouse de la competencia sin conexión, sirven el checkpoint
+con vLLM, corren el `Evaluator` de `swegemma` sobre el corpus público, hacen un
+preflight del modelo servido antes de la primera tarea, se niegan a arrancar
+cuando el peor caso no entra en una sesión de Kaggle, y archivan los artefactos
+en un handoff `runs/<UTC>/`. Las sesiones L4 deben correr con internet
+deshabilitado. Ver `docs/kaggle-remote-run.md`.
 
 ## Verificación de cumplimiento
 

@@ -10,7 +10,9 @@ Test runner: `uv run pytest -q`; notebook cells are syntax-checked with
 
 ## Specs
 
-**S1 — One notebook, top to bottom.** `notebooks/kaggle_run.ipynb` runs
+**S1 — One notebook per base model, top to bottom.**
+`notebooks/kaggle-remote-run-31b.ipynb` and `notebooks/kaggle-remote-run-e4b.ipynb`
+run
 unattended from a clean Kaggle session: configuration, environment probe, harness
 install, repository clone, data/task resolution, model start, evaluation, archive,
 package, stop. Only the configuration cell is edited for a normal run.

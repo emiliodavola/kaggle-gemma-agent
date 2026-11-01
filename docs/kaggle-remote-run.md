@@ -3,14 +3,16 @@ Date: 2026-10-28
 Genre: living reference
 Status: current
 Scope: The Kaggle notebook that runs the tuned `submission/` tree remotely: inputs, accelerator, wheelhouse install, vLLM serving, evaluation, artifacts and known limits. It does not cover the host trial (`docs/host-trial-runbook.md`) or the scored submission contract.
-Source of truth: `notebooks/kaggle_run.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), the competition's *Model Selection, Budget, and Harness Rules* and *Upgraded Accelerators* pages, `data/raw/HARNESS_README.md` (the 2026-10-13 competition copy), `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py`, `runs/20261027T140509Z/`, `runs/20261028T031307Z/` (read 2026-10-31)
+Source of truth: `notebooks/kaggle-remote-run-31b.ipynb` and `notebooks/kaggle-remote-run-e4b.ipynb`, the official Kaggle **Getting Started: Gemma 4 Developer Agent** notebook (local copy, not committed), the competition's *Model Selection, Budget, and Harness Rules* and *Upgraded Accelerators* pages, `data/raw/HARNESS_README.md` (the 2026-10-13 competition copy), `data/raw/wheelhouse/`, `scripts/host-trial/run_host_trial.py`, `runs/20261027T140509Z/`, `runs/20261028T031307Z/` (read 2026-10-31)
 Limits: The 31B notebook has been executed on Kaggle (runs 20261027T140509Z and 20261028T031307Z); the E4B baseline of 2026-10-31 is the first small-model run. The 129-task corpus is still sharded across sessions. Kaggle session limits, accelerator availability and the exact model mount are platform facts, not repository facts.
 ---
 
 # Kaggle remote run
 
-`notebooks/kaggle_run.ipynb` is the first **remote** execution path for the
-harness we tune locally. It follows the official **Getting Started: Gemma 4
+`notebooks/kaggle-remote-run-31b.ipynb` and `notebooks/kaggle-remote-run-e4b.ipynb`
+are the first **remote** execution path for the harness we tune locally. They are
+one implementation in two files: each pins the base model it measures and nothing
+else differs (`tests/test_kaggle_notebook.py` fails when they drift). It follows the official **Getting Started: Gemma 4
 Developer Agent** notebook: installs the competition wheelhouse, loads the
 competition data from `/kaggle/input/competitions/gemma-4-developer-agent`, serves
 the checkpoint with vLLM through `adk_submission`, and runs `swegemma`'s
@@ -35,6 +37,22 @@ It also accepts the adapter manifest, explicit `graph_dir` / `embeddings_dir` /
 version exposes it. `Evaluator.run()` still writes `summary.json`,
 `task_results.jsonl`, `patches/`, `test_outputs/`, `traces/` and `logs/`, so the
 `harness_runs archive` step is unchanged.
+
+## The two variants
+
+One file per base model, same code:
+
+| File | Pins | Kernel |
+|------|------|--------|
+| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/kaggle-run` (31B runs of 2026-10-27 and 2026-10-28) |
+| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-e4b-baseline` (first E4B run, 2026-10-31) |
+
+The only lines that differ are `EXPECTED_MODEL`, `MODEL_SOURCE` and the model name
+in the intro cell. `tests/test_kaggle_notebook.py` normalises the model id and
+asserts the two files are otherwise identical, so a change to the wheelhouse
+install, the preflight or the budget guard cannot land in one and miss the other.
+There is deliberately no third, generic copy: a filename that does not name a
+model is how the wrong checkpoint gets measured and labelled correctly.
 
 ## Inputs
 
@@ -209,7 +227,8 @@ wheelhouse it passes them through.
 
 ## Running it
 
-Upload `notebooks/kaggle_run.ipynb` through **Create → Notebook → File →
+Upload `notebooks/kaggle-remote-run-31b.ipynb` or
+`notebooks/kaggle-remote-run-e4b.ipynb` through **Create → Notebook → File →
 Import Notebook**, set the accelerator and internet switches, attach the three
 inputs, then **Run all**.
 
@@ -221,7 +240,7 @@ the notebook. This is the metadata of the last working push
 {
   "id": "bistiarj/gemma-e4b-baseline",
   "title": "gemma-e4b-baseline",
-  "code_file": "kaggle_run.ipynb",
+  "code_file": "kaggle-remote-run-e4b.ipynb",
   "language": "python",
   "kernel_type": "notebook",
   "is_private": true,

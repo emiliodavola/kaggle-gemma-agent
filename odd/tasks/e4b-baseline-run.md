@@ -107,3 +107,12 @@ produced the expected tree (verified by downloading `submission/agent.yaml` and
 image; status `RUNNING` 20 minutes later. Corpus: 129 tasks, concurrency 4,
 18-minute per-task cap (9.7 h worst case). The outcome is not yet known and is
 the next entry.
+
+**L6 — Notebook split (2026-11-01).** The single `notebooks/kaggle_run.ipynb`
+became `notebooks/kaggle-remote-run-31b.ipynb` and
+`notebooks/kaggle-remote-run-e4b.ipynb`, one per pinned model, and the generic
+file is gone. The two differ in five lines (intro model name and twin, the model
+bullet, `EXPECTED_MODEL`, `MODEL_SOURCE`); `tests/test_kaggle_notebook.py`
+normalises the model id and fails when anything else drifts, and refuses a third
+`kaggle-remote-run-*.ipynb`. The split does not touch the kernel that is already
+running: it was pushed as a copy.
