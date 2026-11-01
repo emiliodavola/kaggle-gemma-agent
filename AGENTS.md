@@ -119,6 +119,9 @@ delivery signal separately from the resolution verdict. See
 │   ├── tasks/                    # task digests (regenerable from tasks.jsonl)
 │   ├── proposals/                # dated proposals (superseded, never deleted)
 │   └── journal/                  # append-only change log (events.jsonl + day files)
+├── notebooks/                    # Kaggle remote-run notebooks, one per base model
+│   ├── kaggle-remote-run-31b.ipynb
+│   └── kaggle-remote-run-e4b.ipynb
 ├── data/                         # local data (raw is git-ignored)
 ├── src/
 │   └── kaggle_gemma_4_developer_agent_competition/
