@@ -616,6 +616,32 @@ full-path fix instead of a traceback:
 export HARNESS_TRIAL_LMS_BIN=/mnt/c/Users/<you>/.lmstudio/bin/lms.exe
 ```
 
+### 6.4 A globally installed `swegemma` must pin `mcp`
+
+Phase 4 skips the install when `swegemma` is already on `PATH`, so a stale
+`uv tool install` from an earlier session is what actually runs. `litellm`
+1.106.6 imported `CacheableResult` from `mcp.types`, which `mcp` 1.30 no longer
+exposes, and every task died before the first tool call:
+
+```
+Sandbox execution error: litellm.APIConnectionError: ...
+cannot import name 'CacheableResult' from 'mcp.types'
+```
+
+Fix it in the tool environment, not in the repository:
+
+```sh
+uv pip install --python "$(uv tool dir)/swegemma/Scripts/python.exe" "mcp>=2.2.0,<3"
+```
+
+`sweegemma` is not on PyPI, so `uv tool install swegemma --force` cannot resolve
+it; the package comes from the competition wheelhouse. On Linux the tool path is
+`.local/share/uv/tools/swegemma/bin/python`.
+
+The eval child is also forced into UTF-8 mode by the runner (`evals_utf8_env`).
+Without it, Windows cp1252 kills the sandbox on the first character it cannot
+encode, with the same "before the first tool call" symptom and empty task logs.
+
 ## 7. Where results land
 
 Under your `--results-dir` (`HARNESS_README.md:641-656`):
