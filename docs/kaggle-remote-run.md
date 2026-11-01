@@ -44,8 +44,8 @@ One file per base model, same code:
 
 | File | Pins | Kernel |
 |------|------|--------|
-| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/kaggle-run` (31B runs of 2026-10-27 and 2026-10-28) |
-| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-e4b-baseline` (first E4B run, 2026-10-31) |
+| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/gemma-remote-run-31b` (31B runs of 2026-10-27 and 2026-10-28) |
+| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-remote-run-e4b` (version 1 holds the first E4B run, 2026-10-31; artifacts in `runs/20261101T021024Z/`) |
 
 The only lines that differ are `EXPECTED_MODEL`, `MODEL_SOURCE` and the model name
 in the intro cell. `tests/test_kaggle_notebook.py` normalises the model id and
@@ -238,8 +238,8 @@ the notebook. This is the metadata of the last working push
 
 ```json
 {
-  "id": "bistiarj/gemma-e4b-baseline",
-  "title": "gemma-e4b-baseline",
+  "id": "bistiarj/gemma-remote-run-e4b",
+  "title": "gemma-remote-run-e4b",
   "code_file": "kaggle-remote-run-e4b.ipynb",
   "language": "python",
   "kernel_type": "notebook",
