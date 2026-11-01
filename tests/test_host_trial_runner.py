@@ -1982,3 +1982,23 @@ def test_resolved_flag_ids_reach_build_eval_args() -> None:
     start = args.index("--task-ids")
     end = start + 1 + len(resolution.task_ids)
     assert args[start + 1 : end] == list(resolution.task_ids)
+
+
+def test_evals_utf8_env_forces_utf8_and_keeps_the_rest() -> None:
+    """Windows cp1252 kills the sandbox on the first non-Latin-1 character."""
+    env = runner.evals_utf8_env({"PATH": "/usr/bin", "PYTHONUTF8": "0"})
+
+    assert env["PYTHONUTF8"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8"
+    assert env["PATH"] == "/usr/bin"
+
+
+def test_evals_utf8_env_defaults_to_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HARNESS_PROBE", "value")
+
+    env = runner.evals_utf8_env()
+
+    assert env["HARNESS_PROBE"] == "value"
+    assert env["PYTHONUTF8"] == "1"

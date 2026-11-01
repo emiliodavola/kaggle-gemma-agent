@@ -1098,6 +1098,25 @@ def run_cmd(
         raise TrialError(f"{label} failed (exit {result.returncode})")
 
 
+def evals_utf8_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return *base* with UTF-8 forced for the ``swegemma eval`` child process.
+
+    On Windows the default locale encoding is cp1252. ``swegemma`` pipes task
+    text (problem statements, patches, test output) through subprocesses opened
+    with ``text=True``, so one character outside cp1252 kills the sandbox before
+    the first tool call:
+
+        Sandbox execution error: 'charmap' codec can't encode character ...
+
+    ``PYTHONUTF8`` makes the child start in UTF-8 mode, so every pipe it opens
+    inherits UTF-8; ``PYTHONIOENCODING`` covers the streams it re-opens itself.
+    """
+    merged = dict(base if base is not None else os.environ)
+    merged["PYTHONUTF8"] = "1"
+    merged["PYTHONIOENCODING"] = "utf-8"
+    return merged
+
+
 def _looks_rate_limited(detail: str) -> bool:
     """Return whether *detail* (CLI stderr/stdout) signals a transient rate limit.
 
@@ -1987,6 +2006,7 @@ def run_eval(
                 task_ids=eval_task_ids,
             ),
             what="swegemma eval",
+            env=evals_utf8_env(),
         )
     finally:
         proxy.stop()
