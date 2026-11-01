@@ -44,18 +44,9 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from .prompt_variant import (
-    SELECTOR,
-    PromptVariantError,
-    active_prompt_path,
-    apply_variant,
-    has_selector,
-    read_variant,
-    variant_path,
-)
-
 MAX_UNPACKED_BYTES = 3 * 1024**3
 AGENT_MANIFEST = "agent.yaml"
+SYSTEM_PROMPT = "prompts/system.md"
 EVAL_CONFIG = "eval_config.yaml"
 STACK_DIR = "skills"
 SCRIPTS_DIR = "scripts"
@@ -211,11 +202,6 @@ def build_submission(
     """
     source_dir = Path(source_dir)
     output_path = Path(output_path)
-    if has_selector(source_dir):
-        try:
-            apply_variant(source_dir)
-        except PromptVariantError as exc:
-            raise PackError(str(exc)) from exc
     validate_source(source_dir)
     manifest = load_agent_manifest(source_dir, agent_manifest)
 
@@ -375,23 +361,14 @@ def _always_on_prompt(source_dir: Path, violations: list[str]) -> tuple[Path, st
     """Return the resolved always-on prompt and its text, or ``None``.
 
     The manifest injects ``prompts/system.md`` with a static ``!include``, so the
-    whole decoded file is the always-on text; nothing is stripped. When a
-    selector is present, the selected variant's own file wins. A selector that
-    cannot be resolved, or a missing selected file, appends one violation and
-    returns ``None`` so the caller skips rules s1 and s2.
+    whole decoded file is the always-on text; nothing is stripped. A missing
+    file appends one violation and returns ``None`` so the caller skips rules s1
+    and s2.
     """
-    if has_selector(source_dir):
-        try:
-            prompt_path = variant_path(source_dir, read_variant(source_dir))
-        except PromptVariantError as exc:
-            violations.append(f"{SELECTOR}: {exc} (rules s1/s2)")
-            return None
-    else:
-        prompt_path = active_prompt_path(source_dir)
+    prompt_path = Path(source_dir) / SYSTEM_PROMPT
     if not prompt_path.is_file():
         violations.append(
-            f"{prompt_path.relative_to(source_dir)}: selected always-on prompt"
-            " not found (rules s1/s2)"
+            f"{prompt_path.relative_to(source_dir)}: always-on prompt not found (rules s1/s2)"
         )
         return None
     return prompt_path.relative_to(source_dir), _read_text(prompt_path)
@@ -465,10 +442,8 @@ def check_harness_surface(source_dir: Path) -> list[str]:
     * s3: every ``scripts/<file>.py`` referenced by a skill body or the always-on
       text exists at ``scripts/<file>.py`` in the source tree.
 
-    The always-on text is the file selected by ``configs/prompt_variant.yaml``
-    (``prompts/system.md`` when no selector is present). This function is
-    read-only: it never materializes the variant, never writes, and never
-    compares ``prompts/system.md`` against the selection.
+    The always-on text is ``prompts/system.md``. This function is read-only: it
+    never writes.
     """
     source_dir = Path(source_dir)
     if not source_dir.is_dir():
