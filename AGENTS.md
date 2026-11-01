@@ -13,6 +13,44 @@ Base model: one of the four permitted quantized variants
 (`gemma-4-31b-it-qat-w4a16-ct` by default, or the 12B / E4B / E2B). The E4B
 baseline run of 2026-10-31 targets the USD 10,000 small-model bonus.
 
+## Working scope
+
+From 2026-11-01 the work happens on **Kaggle**. The two notebooks under
+`notebooks/` are the surface we change and the Kaggle platform is where runs
+execute; do not start work in another area of the repository unless the task
+names it explicitly.
+
+- `notebooks/kaggle-remote-run-31b.ipynb` and
+  `notebooks/kaggle-remote-run-e4b.ipynb` are one implementation in two files.
+  They may differ **only** in the pinned model: `tests/test_kaggle_notebook.py`
+  fails on any other drift and refuses a third `kaggle-remote-run-*.ipynb`.
+- A run stays reproducible in **faithful** mode, and every flag that changes what
+  is measured is recorded in `run_meta.json` and in the archived report. A number
+  produced under a different mode is never compared against a faithful baseline.
+- L4 sessions run with internet disabled, so everything a notebook needs arrives
+  as an attached input: competition data, wheelhouse, code dataset, model.
+- A notebook is development tooling and is never submitted. It reads
+  `submission/` from the code dataset, so a notebook change cannot alter what the
+  scorer receives; changing the agent itself is a `submission/` change and needs
+  its own issue, PR and gate run.
+
+## Competition rules bind every change
+
+A submission that fails one contract point scores **zero**, and a local run that
+ignores the L4 policy can cost the account. Before changing or running a
+notebook, check the change against the six contract points below,
+`docs/competition-research.md` and the competition pages those documents quote:
+
+- one base model per submission, chosen from the four permitted quantized
+  variants, identical on every agent and subagent;
+- `submission/` stays declarative YAML with 12 skills and under 3 GiB unpacked;
+- no network, pip, MCP or subprocess strings under `submission/`;
+- per-task budgets inside 100 tool calls / 60 minutes / 500 turns, and 12 hours
+  for the whole hidden set;
+- L4 sessions run with internet disabled and nothing is downloaded at run time;
+- the scorer strips tests and runner config from a patch, so a fix belongs in the
+  library code.
+
 ## Language
 
 Everything in this repository is written in **English**: documentation, issues,
