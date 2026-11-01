@@ -79,8 +79,8 @@ que fijan; `tests/test_kaggle_notebook.py` falla si se desincronizan.
 
 | Notebook | Fija | Kernel de Kaggle |
 |----------|------|------------------|
-| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/kaggle-run` |
-| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-e4b-baseline` |
+| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/gemma-remote-run-31b` |
+| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-remote-run-e4b` |
 
 Ambos instalan el wheelhouse de la competencia sin conexión, sirven el checkpoint
 con vLLM, corren el `Evaluator` de `swegemma` sobre el corpus público, hacen un

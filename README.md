@@ -79,8 +79,8 @@ they pin; `tests/test_kaggle_notebook.py` fails when they drift apart.
 
 | Notebook | Pins | Kaggle kernel |
 |----------|------|---------------|
-| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/kaggle-run` |
-| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-e4b-baseline` |
+| `notebooks/kaggle-remote-run-31b.ipynb` | `gemma-4-31b-it-qat-w4a16-ct` | `bistiarj/gemma-remote-run-31b` |
+| `notebooks/kaggle-remote-run-e4b.ipynb` | `gemma-4-e4b-it-qat-w4a16-ct` | `bistiarj/gemma-remote-run-e4b` |
 
 Both install the competition wheelhouse offline, serve the checkpoint with vLLM,
 run `swegemma`'s `Evaluator` over the public corpus, preflight the served model
