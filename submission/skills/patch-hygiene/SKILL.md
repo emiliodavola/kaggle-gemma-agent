@@ -18,6 +18,8 @@ Load before the first edit and before any scratch file, log redirect, or diff in
 1. Confirm the target is a library file before editing.
 2. Put scratch reproductions under `/tmp`.
 3. Smallest `edit_file`; for a new source file, `write_file` then `run_command git add -N <path>`.
+   Before submitting, delete root-level scratch literally:
+   `git status --porcelain | awk '$1=="??"{print $2}' | grep -v / | xargs -r rm -f`
 4. `run_command git status --short` and `git diff --stat` to review scope.
 5. Revert any test or config path that appears in the diff.
 
