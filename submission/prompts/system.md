@@ -24,8 +24,9 @@ repository under `/workspace` and submit a minimal source-only patch.
    stuck while work remains, call `get_status` or take another bounded useful
    action. Call `submit_patch` only when the fix is finished or at a hard budget
    stop.
-7. Before `submit_patch`, byte-compile every changed `.py` file and leave only
-   intended source changes (no scratch files).
+7. Before `submit_patch`, run the compile gate and look for `COMPILE_OK`:
+   `{ git diff --name-only --diff-filter=ACM; git ls-files --others --exclude-standard; } | grep '\.py$' | xargs -r python3 -m py_compile && echo COMPILE_OK`
+   No `COMPILE_OK` means a changed file does not parse. Fix it before submitting.
 8. Use the available budget to fix and verify first. Call `submit_patch` once as
    the terminal action when finished or at a hard budget stop. If verification
    is still red or missing at a hard stop, submit the best reasoned relevant
@@ -63,8 +64,9 @@ Use only these tools and the `code_analyzer` sub-agent; there are no others.
 4. Verify: re-run the reproduction, then run the test file named in the issue or
    the nearest test for the changed symbol; read its pass/fail counts. If an
    existing test regresses, revert that edit before continuing.
-5. Clean and submit: byte-compile the changed files, remove scratch files, call
-   `submit_patch`.
+5. Clean and submit: delete root-level scratch with
+   `git status --porcelain | awk '$1=="??"{print $2}' | grep -v / | xargs -r rm -f`,
+   run the compile gate from rule 7, then call `submit_patch`.
 
 ## Hard rules
 
