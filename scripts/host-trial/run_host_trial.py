@@ -920,8 +920,15 @@ def build_eval_args(
     results_dir: Path,
     models_yaml: Path,
     task_ids: Sequence[str] = TASK_IDS,
+    concurrency: int = 1,
 ) -> list[str]:
-    """Build the ``swegemma eval`` argv for the resolved trial task ids."""
+    """Build the ``swegemma eval`` argv for the resolved trial task ids.
+
+    ``concurrency`` defaults to 1, the faithful condition: one task at a time, so
+    per-task wall time is not inflated by contention. A trajectory-generation
+    batch raises it to finish inside a day; token counts are unaffected, wall
+    times are not.
+    """
     return [
         "swegemma",
         "eval",
@@ -942,7 +949,7 @@ def build_eval_args(
         "--max-time-minutes",
         "60",
         "--concurrency",
-        "1",
+        str(concurrency),
         "--display",
         "auto",
         "--models-yaml",
@@ -1949,6 +1956,7 @@ def run_eval(
     *,
     task_ids: Sequence[str] | None = None,
     skip_backend_smoke: bool = False,
+    concurrency: int = 1,
 ) -> None:
     """Phase 7: generate the models.yaml, start the header proxy, run ``swegemma eval``.
 
@@ -2004,6 +2012,7 @@ def run_eval(
                 results_dir=paths.results_dir,
                 models_yaml=paths.models_yaml,
                 task_ids=eval_task_ids,
+                concurrency=concurrency,
             ),
             what="swegemma eval",
             env=evals_utf8_env(),
@@ -2159,6 +2168,7 @@ def run(
     skip_backend_smoke: bool = False,
     launch_model: bool = False,
     keep_model: bool = False,
+    concurrency: int = 1,
 ) -> Path:
     """Execute all eight trial phases and return the archived run directory.
 
@@ -2211,7 +2221,13 @@ def run(
     if run_id is not None:
         emit_run_started(paths.repo_root, run_id, task_ids)
     try:
-        run_eval(paths, env, task_ids=task_ids, skip_backend_smoke=skip_backend_smoke)
+        run_eval(
+            paths,
+            env,
+            task_ids=task_ids,
+            skip_backend_smoke=skip_backend_smoke,
+            concurrency=concurrency,
+        )
     finally:
         if wants_launch and not keep_model:
             launch_local_model(paths, merged_env, "stop")
@@ -2292,6 +2308,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="do not stop the launched model server when the trial ends",
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "tasks evaluated in parallel (default 1, the faithful condition). A "
+            "trajectory-generation batch raises it; token counts are unaffected, "
+            "per-task wall time is not."
+        ),
+    )
+    parser.add_argument(
         "--tasks",
         action="append",
         default=None,
@@ -2336,6 +2363,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             skip_backend_smoke=args.skip_backend_smoke,
             launch_model=args.launch_model,
             keep_model=args.keep_model,
+            concurrency=args.concurrency,
         )
     except TrialError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

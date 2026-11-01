@@ -2002,3 +2002,24 @@ def test_evals_utf8_env_defaults_to_the_process_environment(
 
     assert env["HARNESS_PROBE"] == "value"
     assert env["PYTHONUTF8"] == "1"
+
+
+def test_build_eval_args_passes_concurrency() -> None:
+    """Concurrency defaults to the faithful 1 and can be raised for a batch."""
+    kwargs = dict(
+        tasks_file=Path("tasks.jsonl"),
+        snapshots_dir=Path("snapshots"),
+        submission_dir=Path("submission"),
+        results_dir=Path("results"),
+        models_yaml=Path("models.yaml"),
+        task_ids=["a"],
+    )
+
+    assert (
+        "1"
+        == runner.build_eval_args(**kwargs)[
+            runner.build_eval_args(**kwargs).index("--concurrency") + 1
+        ]
+    )
+    raised = runner.build_eval_args(**kwargs, concurrency=4)
+    assert "4" == raised[raised.index("--concurrency") + 1]
