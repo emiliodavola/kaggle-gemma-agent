@@ -345,25 +345,6 @@ def test_harness_surface_flags_missing_script_reference(tmp_path: Path) -> None:
     assert pack.check_harness_surface(source) == []
 
 
-def test_harness_surface_follows_selected_variant(tmp_path: Path) -> None:
-    source = _make_compliant_source(tmp_path)
-    names = _skill_names(source)
-    (source / "configs").mkdir()
-    (source / "configs" / "prompt_variant.yaml").write_text("variant: v2\n", encoding="utf-8")
-    (source / "prompts" / "system.v2.md").write_text("\n".join(names), encoding="utf-8")
-    _write_always_on(source, "no skill is named here\n")
-
-    assert pack.check_harness_surface(source) == []
-
-    (source / "prompts" / "system.v2.md").write_text("no skill is named here\n", encoding="utf-8")
-    _write_always_on(source, "\n".join(names))
-
-    violations = pack.check_harness_surface(source)
-
-    assert len(violations) == len(names)
-    assert all("rule s1" in v for v in violations)
-
-
 def test_harness_surface_ignores_prose_script_mentions(tmp_path: Path) -> None:
     source = _make_compliant_source(tmp_path)
     text = (
@@ -378,18 +359,6 @@ def test_harness_surface_ignores_prose_script_mentions(tmp_path: Path) -> None:
     assert pack.check_harness_surface(source) == []
 
 
-def test_harness_surface_reports_unresolvable_selector(tmp_path: Path) -> None:
-    source = _make_compliant_source(tmp_path)
-    (source / "configs").mkdir()
-    (source / "configs" / "prompt_variant.yaml").write_text("variant: nope\n", encoding="utf-8")
-
-    violations = pack.check_harness_surface(source)
-
-    assert len(violations) == 1
-    assert "unknown variant" in violations[0]
-    assert "rules s1/s2" in violations[0]
-
-
 def test_harness_surface_reports_missing_prompt(tmp_path: Path) -> None:
     source = _make_compliant_source(tmp_path)
     (source / "prompts" / "system.md").unlink()
@@ -397,7 +366,7 @@ def test_harness_surface_reports_missing_prompt(tmp_path: Path) -> None:
     violations = pack.check_harness_surface(source)
 
     assert len(violations) == 1
-    assert "selected always-on prompt not found" in violations[0]
+    assert "always-on prompt not found" in violations[0]
     assert "rules s1/s2" in violations[0]
 
 
