@@ -22,7 +22,13 @@ Measured on an RTX 3090 (24 GB) on 2026-11-02:
 The manual wrapper is therefore part of the measured configuration, not an
 optimization to try later.
 
-The bigger lever is not the towers, which hold 0.10 and 0.14 GiB.
+The second lever is the loss. With a 262k vocabulary the logits tensor and
+its gradient dominate: a 4096-token step peaks at 26.0 GB. Computing the
+cross-entropy in 256-token chunks never materialises it and moves the ceiling
+to **8192 tokens at 19.9 GB** (2.2 s forward, 9.2 s backward). 12288 reaches
+24.97 GB and spills.
+
+The third lever is not the towers, which hold 0.10 and 0.14 GiB.
 ``prepare_model_for_kbit_training`` upcasts every non-quantized parameter to
 fp32, and this model carries a per-layer embedding table: 13.0 GiB of fp32
 embeddings. Casting the large fp32 tensors back to bf16 frees 6.5 GiB and takes a
@@ -115,33 +121,59 @@ def enable_manual_checkpointing(model) -> int:
     return len(layers)
 
 
-def step(model, seq_len: int) -> dict:
+def chunked_loss(inner, lm_head, input_ids, chunk_size: int = 256):
+    """Cross-entropy without ever materialising the full logits tensor.
+
+    A 262k vocabulary makes the logits the largest tensor of the step: seq x
+    262144 x 2 bytes for the logits plus the same for the gradient. The head is
+    applied to one slice of the hidden states at a time, so the peak tracks the
+    chunk instead of the sequence.
+    """
+    hidden = inner.model(input_ids=input_ids, use_cache=False).last_hidden_state
+    vocab = lm_head.weight.shape[0]
+    total = torch.zeros((), device=input_ids.device, dtype=torch.float32)
+    for start in range(0, input_ids.shape[1], chunk_size):
+        chunk = hidden[:, start : start + chunk_size]
+        logits = lm_head(chunk).float()
+        total = total + torch.nn.functional.cross_entropy(
+            logits.view(-1, vocab),
+            input_ids[:, start : start + chunk_size].reshape(-1),
+            reduction="sum",
+        )
+    return total / input_ids.shape[1]
+
+
+def step(model, seq_len: int, loss_mode: str = "chunked") -> dict:
     input_ids = torch.randint(0, 1024, (1, seq_len), device="cuda")
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
 
     started: float = time.perf_counter()
-    out = model(input_ids=input_ids, labels=input_ids)
+    if loss_mode == "chunked":
+        inner = model.base_model.model
+        loss = chunked_loss(inner, inner.get_output_embeddings(), input_ids)
+    else:
+        loss = model(input_ids=input_ids, labels=input_ids).loss
     torch.cuda.synchronize()
     forward_s: float = time.perf_counter() - started
 
     started: float = time.perf_counter()
-    out.loss.backward()
+    loss.backward()
     torch.cuda.synchronize()
     backward_s: float = time.perf_counter() - started
 
     peak_gb = torch.cuda.max_memory_allocated() / 1024**3
     reserved_gb = torch.cuda.max_memory_reserved() / 1024**3
-    loss = float(out.loss.detach())
+    loss_value = float(loss.detach())
 
     model.zero_grad(set_to_none=True)
-    del out, input_ids
+    del loss, input_ids
     torch.cuda.empty_cache()
     return {
         "seq_len": seq_len,
         "forward_s": round(number=forward_s, ndigits=1),
         "backward_s": round(number=backward_s, ndigits=1),
-        "loss": round(number=loss, ndigits=4),
+        "loss": round(number=loss_value, ndigits=4),
         "peak_allocated_gb": round(number=peak_gb, ndigits=2),
         "peak_reserved_gb": round(number=reserved_gb, ndigits=2),
     }
@@ -149,10 +181,14 @@ def step(model, seq_len: int) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--seq", default="1024,2048,4096,8192", help="comma-separated sequence lengths"
-    )
+    parser.add_argument("--seq", default="2048,4096,8192", help="comma-separated sequence lengths")
     parser.add_argument("--out", default=None, help="write the measurements as JSON to this path")
+    parser.add_argument(
+        "--loss",
+        choices=("chunked", "full"),
+        default="chunked",
+        help="chunked never materialises the 262k-vocabulary logits; it is what makes 8192 fit",
+    )
     args: argparse.Namespace = parser.parse_args()
     lengths: list[int] = [int(value) for value in args.seq.split(",") if value.strip()]
 
@@ -205,7 +241,7 @@ def main() -> int:
     for seq_len in lengths:
         print(f"\n--- seq {seq_len} ---")
         try:
-            row = step(model, seq_len)
+            row = step(model, seq_len, args.loss)
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
             print(f"seq {seq_len}: OUT OF MEMORY, skipped")

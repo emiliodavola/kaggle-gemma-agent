@@ -47,9 +47,10 @@ runs one forward+backward per sequence length. On the RTX 3090:
 
 | Sequence | Peak VRAM | Forward | Backward |
 |---------:|----------:|--------:|---------:|
-| 1024 | 13.1 GB | 0.7 s | 0.7 s |
-| 2048 | 17.4 GB | 0.4 s | 1.7 s |
-| 4096 | 26.0 GB, over the card | 1.0 s | 91.9 s |
+| 2048 | 11.9 GB | 1.2 s | 1.5 s |
+| 4096 | 14.5 GB | 1.2 s | 3.5 s |
+| 8192 | 19.7 GB | 2.8 s | 9.0 s |
+| 12288 | 25.0 GB, over the card | 5.8 s | 19.1 s |
 
 Two findings that change how training is written:
 
@@ -62,6 +63,10 @@ Two findings that change how training is written:
   embeddings. `downcast_large_float32()` casts the big ones back to bf16 and
   frees 6.5 GiB, which is what makes 2048 tokens fit. The vision and audio towers
   are not the lever: they hold 0.10 and 0.14 GiB.
+- The loss is computed in 256-token chunks (`chunked_loss`). With a 262k
+  vocabulary the full logits tensor and its gradient dominate the step: the full
+  cross-entropy peaks at 26.0 GB for 4096 tokens, the chunked one at 14.5 GB, and
+  it is what puts 8192 tokens inside the card.
 - The vision and audio towers wrap their projections in `Gemma4ClippableLinear`,
   which peft cannot inject into, so the adapter targets a regex over
   `language_model.layers.*` only.
