@@ -91,6 +91,59 @@ def load_4bit(model_dir: Path):
         return AutoModelForImageTextToText.from_pretrained(model_dir, **kwargs)
 
 
+class Int8RowEmbedding(torch.nn.Module):
+    """A frozen embedding table stored as int8 with one scale per row.
+
+    Only the rows a batch touches are dequantized, so the cost tracks the
+    sequence length instead of the vocabulary. ``embed_scale`` reproduces the
+    multiplication the original ``Gemma4TextScaledWordEmbedding`` applies.
+    """
+
+    def __init__(self, weight_q, scale, embed_scale: float, dim: int, dtype: torch.dtype):
+        super().__init__()
+        self.register_buffer("weight_q", weight_q)
+        self.register_buffer("scale", scale)
+        self.embed_scale = embed_scale
+        self.out_dtype = dtype
+        self.dim = dim
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        flat = input_ids.reshape(-1)
+        rows = self.weight_q[flat].to(self.out_dtype)
+        rows = rows * self.scale[flat].unsqueeze(-1).to(self.out_dtype)
+        return (rows * self.embed_scale).view(*input_ids.shape, self.dim)
+
+
+def quantize_per_layer_table(model, block: int = 16384) -> float:
+    """Replace ``embed_tokens_per_layer`` with an int8 table. Returns GiB freed.
+
+    Quantization runs on the CPU in row blocks: the tensor is 5.25 GiB in bf16,
+    and a single fp32 temporary would double that in RAM.
+    """
+    original = model.get_per_layer_input_embeddings()
+    weight = original.weight.detach().to("cpu")
+    rows, dim = weight.shape
+    embed_scale = float(getattr(original, "scalar_embed_scale", 1.0))
+
+    scales_cpu = torch.empty(rows, dtype=torch.float32)
+    q_cpu = torch.empty((rows, dim), dtype=torch.int8)
+    for start in range(0, rows, block):
+        chunk = weight[start : start + block].float()
+        scale = chunk.abs().amax(dim=1).clamp_min(1e-8) / 127.0
+        scales_cpu[start : start + block] = scale
+        q_cpu[start : start + block] = (
+            torch.round(chunk / scale.unsqueeze(1)).clamp_(-127, 127).to(torch.int8)
+        )
+    del weight
+
+    replacement = Int8RowEmbedding(
+        q_cpu.to("cuda"), scales_cpu.to("cuda"), embed_scale, dim, torch.bfloat16
+    )
+    model.set_per_layer_input_embeddings(replacement)
+    torch.cuda.empty_cache()
+    return (q_cpu.numel() * 2 - q_cpu.numel()) / 1024**3
+
+
 def downcast_large_float32(model, min_elements: int = 50_000_000) -> float:
     """Cast the big fp32 tensors back to bf16 and return the GiB freed.
 
@@ -144,6 +197,7 @@ def chunked_loss(inner, lm_head, input_ids, chunk_size: int = 256):
 
 
 def step(model, seq_len: int, loss_mode: str = "chunked") -> dict:
+    torch.manual_seed(0)  # two runs must see the same tokens to compare losses
     input_ids = torch.randint(0, 1024, (1, seq_len), device="cuda")
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
@@ -184,6 +238,11 @@ def main() -> int:
     parser.add_argument("--seq", default="2048,4096,8192", help="comma-separated sequence lengths")
     parser.add_argument("--out", default=None, help="write the measurements as JSON to this path")
     parser.add_argument(
+        "--int8-embeddings",
+        action="store_true",
+        help="store embed_tokens_per_layer as int8 (2.6 GiB) instead of bf16 (5.25 GiB)",
+    )
+    parser.add_argument(
         "--loss",
         choices=("chunked", "full"),
         default="chunked",
@@ -211,6 +270,8 @@ def main() -> int:
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
     model.enable_input_require_grads()
     freed: float = downcast_large_float32(model)
+    if args.int8_embeddings:
+        print(f"int8 per-layer table: freed {quantize_per_layer_table(model):.2f} GiB")
     torch.cuda.empty_cache()
     print(
         f"downcast: freed {freed:.2f} GiB | "

@@ -185,3 +185,27 @@ Build it if the validation is cheap and the delta is honest:
    backward time near the 8192 figure, not the 92-second spill figure.
 3. If both pass, 12288 becomes the training window; if not, the answer is 8192 and
    this document closes as superseded.
+
+## 8. Measured (2026-11-02)
+
+Implemented in `training/smoke_qlora.py` as `Int8RowEmbedding` and
+`quantize_per_layer_table`, behind `--int8-embeddings`. Same seed, same tokens,
+so the losses are comparable.
+
+| Window | bf16 table | int8 table |
+|-------:|-----------:|-----------:|
+| 2048 | 11.91 GB peak, loss 20.2641 | **9.29 GB**, loss 20.3105 |
+| 4096 | 14.50 GB peak, loss 21.1217 | **11.88 GB**, loss 21.1460 |
+| 10240 | — | **19.66 GB**, loss 22.4155, backward 12.6 s |
+| 12288 | 24.72 GB, backward 92 s | 22.29 GB, backward **822.7 s** |
+
+The quantization frees 2.62 GiB and costs 0.23% on the loss at 2048 tokens and
+0.11% at 4096: the gate tolerates int8 without complaint.
+
+The window does not go to 12288. At 22.29 GB allocated with 23.06 GB reserved on a
+24 GiB card, the backward takes 822 seconds against 92 without the int8 table:
+that is not compute, it is the driver paging at the edge of capacity. **10240 is
+the stable window**: 19.66 GB peak, 20.55 GB reserved, 12.6 s backward.
+
+Verdict: the mechanism is worth keeping, the target was off by one step. The
+training window is 10240 tokens, five times the 2048 the plan started from.
