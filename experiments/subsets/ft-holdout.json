@@ -33,5 +33,10 @@
     "rich_3938",
     "rich_4006",
     "rich_4079"
-  ]
+  ],
+  "counts": {
+    "Textualize/rich": 11,
+    "fastapi/fastapi": 15,
+    "psf/requests": 3
+  }
 }
