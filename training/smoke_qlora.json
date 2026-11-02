@@ -1,0 +1,20 @@
+[
+  {
+    "seq_len": 1024,
+    "forward_s": 0.8,
+    "backward_s": 0.9,
+    "loss": 16.5888,
+    "peak_allocated_gb": 20.86,
+    "peak_reserved_gb": 22.05,
+    "ok": true
+  },
+  {
+    "seq_len": 2048,
+    "forward_s": 1.1,
+    "backward_s": 7.6,
+    "loss": 16.8613,
+    "peak_allocated_gb": 26.39,
+    "peak_reserved_gb": 28.05,
+    "ok": true
+  }
+]

@@ -171,6 +171,7 @@ delivery signal separately from the resolution verdict. See
 │   ├── tasks/                    # task digests (regenerable from tasks.jsonl)
 │   ├── proposals/                # dated proposals (superseded, never deleted)
 │   └── journal/                  # append-only change log (events.jsonl + day files)
+├── training/                     # LoRA SFT project, Python 3.12, RTX 3090 (own uv project)
 ├── notebooks/                    # Kaggle remote-run notebooks, one per base model
 │   ├── kaggle-remote-run-31b.ipynb
 │   └── kaggle-remote-run-e4b.ipynb
