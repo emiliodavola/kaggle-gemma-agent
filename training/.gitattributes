@@ -1,0 +1,31 @@
+# Normalize line endings across the repository.
+* text=auto eol=lf
+
+# Windows scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Python sources and notebooks.
+*.py text diff=python
+*.pyi text diff=python
+*.ipynb text diff=python
+
+# Binary artifacts (never diff or merge as text).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.parquet binary
+*.safetensors binary
+*.npz binary
+
+# Lockfiles: keep local, never attempt a textual merge.
+uv.lock merge=binary
+*.lock merge=binary
+
+# GitHub Linguist: keep data artifacts and lockfiles out of language stats.
+data/** linguist-detectable=false
+uv.lock linguist-generated=true
