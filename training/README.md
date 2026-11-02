@@ -52,6 +52,15 @@ runs one forward+backward per sequence length. On the RTX 3090:
 | 8192 | 19.7 GB | 2.8 s | 9.0 s |
 | 12288 | 25.0 GB, over the card | 5.8 s | 19.1 s |
 
+With `--int8-embeddings` (the per-layer table stored as int8, 2.62 GiB freed):
+
+| Sequence | Peak VRAM | Backward |
+|---------:|----------:|---------:|
+| 2048 | 9.3 GB | 1.5 s |
+| 4096 | 11.9 GB | 3.5 s |
+| **10240** | **19.7 GB** | **12.6 s** |
+| 12288 | 22.3 GB | 822.7 s (paging) |
+
 Two findings that change how training is written:
 
 - `gradient_checkpointing_enable()` is a **no-op** on this architecture: a
