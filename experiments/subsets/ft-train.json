@@ -104,5 +104,11 @@
     "rich_4075",
     "rich_4076",
     "rich_4077"
-  ]
+  ],
+  "counts": {
+    "Textualize/rich": 37,
+    "encode/httpx": 1,
+    "fastapi/fastapi": 52,
+    "psf/requests": 10
+  }
 }
