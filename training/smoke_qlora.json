@@ -1,20 +1,29 @@
 [
   {
-    "seq_len": 1024,
-    "forward_s": 0.8,
-    "backward_s": 0.9,
-    "loss": 16.5888,
-    "peak_allocated_gb": 20.86,
-    "peak_reserved_gb": 22.05,
+    "seq_len": 2048,
+    "forward_s": 1.2,
+    "backward_s": 1.5,
+    "loss": 15.2177,
+    "peak_allocated_gb": 11.91,
+    "peak_reserved_gb": 12.58,
     "ok": true
   },
   {
-    "seq_len": 2048,
-    "forward_s": 1.1,
-    "backward_s": 7.6,
-    "loss": 16.8613,
-    "peak_allocated_gb": 26.39,
-    "peak_reserved_gb": 28.05,
+    "seq_len": 4096,
+    "forward_s": 1.2,
+    "backward_s": 3.5,
+    "loss": 22.4848,
+    "peak_allocated_gb": 14.5,
+    "peak_reserved_gb": 15.34,
+    "ok": true
+  },
+  {
+    "seq_len": 8192,
+    "forward_s": 2.8,
+    "backward_s": 9.0,
+    "loss": 21.2726,
+    "peak_allocated_gb": 19.69,
+    "peak_reserved_gb": 21.58,
     "ok": true
   }
 ]
