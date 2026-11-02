@@ -1,20 +1,20 @@
 [
   {
     "seq_len": 1024,
-    "forward_s": 0.8,
-    "backward_s": 0.9,
-    "loss": 16.5888,
-    "peak_allocated_gb": 20.86,
-    "peak_reserved_gb": 22.05,
+    "forward_s": 0.7,
+    "backward_s": 0.8,
+    "loss": 16.3116,
+    "peak_allocated_gb": 13.12,
+    "peak_reserved_gb": 13.47,
     "ok": true
   },
   {
     "seq_len": 2048,
-    "forward_s": 1.1,
-    "backward_s": 7.6,
-    "loss": 16.8613,
-    "peak_allocated_gb": 26.39,
-    "peak_reserved_gb": 28.05,
+    "forward_s": 0.6,
+    "backward_s": 1.6,
+    "loss": 16.1421,
+    "peak_allocated_gb": 17.42,
+    "peak_reserved_gb": 17.98,
     "ok": true
   }
 ]

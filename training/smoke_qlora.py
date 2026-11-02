@@ -22,6 +22,12 @@ Measured on an RTX 3090 (24 GB) on 2026-11-02:
 The manual wrapper is therefore part of the measured configuration, not an
 optimization to try later.
 
+The bigger lever is not the towers, which hold 0.10 and 0.14 GiB.
+``prepare_model_for_kbit_training`` upcasts every non-quantized parameter to
+fp32, and this model carries a per-layer embedding table: 13.0 GiB of fp32
+embeddings. Casting the large fp32 tensors back to bf16 frees 6.5 GiB and takes a
+2048-token step to 17.4 GB at 0.4 s forward and 1.7 s backward.
+
 Usage:
     uv run --directory training python smoke_qlora.py [--seq 1024,2048,4096,8192]
 """
@@ -77,6 +83,22 @@ def load_4bit(model_dir: Path):
             "image-text class"
         )
         return AutoModelForImageTextToText.from_pretrained(model_dir, **kwargs)
+
+
+def downcast_large_float32(model, min_elements: int = 50_000_000) -> float:
+    """Cast the big fp32 tensors back to bf16 and return the GiB freed.
+
+    ``prepare_model_for_kbit_training`` upcasts every non-quantized parameter to
+    fp32. Here that means 13 GiB of embedding tables, including the per-layer
+    table the MatFormer architecture carries. Small tensors stay fp32, where the
+    extra precision is worth more than the bytes.
+    """
+    freed = 0
+    for param in model.parameters():
+        if param.dtype == torch.float32 and param.numel() > min_elements:
+            freed += param.numel() * 2
+            param.data = param.data.to(torch.bfloat16)
+    return freed / 1024**3
 
 
 def enable_manual_checkpointing(model) -> int:
@@ -152,6 +174,12 @@ def main() -> int:
     model.get_output_embeddings().to(torch.bfloat16)
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
     model.enable_input_require_grads()
+    freed: float = downcast_large_float32(model)
+    torch.cuda.empty_cache()
+    print(
+        f"downcast: freed {freed:.2f} GiB | "
+        f"resident {torch.cuda.memory_allocated() / 1024**3:.2f} GiB"
+    )
     model = get_peft_model(
         model,
         LoraConfig(
@@ -163,7 +191,7 @@ def main() -> int:
             task_type="CAUSAL_LM",
         ),
     )
-    patched = enable_manual_checkpointing(model)
+    patched: int = enable_manual_checkpointing(model)
     print(f"manual checkpointing: {patched} language layers wrapped")
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)

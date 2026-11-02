@@ -47,9 +47,9 @@ runs one forward+backward per sequence length. On the RTX 3090:
 
 | Sequence | Peak VRAM | Forward | Backward |
 |---------:|----------:|--------:|---------:|
-| 1024 | 20.9 GB | 0.8 s | 0.9 s |
-| 2048 | 26.4 GB, over the card | 1.1 s | 7.6 s |
-| 4096 | 37.4 GB, over the card | 1.4 s | 211.7 s |
+| 1024 | 13.1 GB | 0.7 s | 0.7 s |
+| 2048 | 17.4 GB | 0.4 s | 1.7 s |
+| 4096 | 26.0 GB, over the card | 1.0 s | 91.9 s |
 
 Two findings that change how training is written:
 
@@ -57,11 +57,32 @@ Two findings that change how training is written:
   1024-token step peaks at 32.1 GB and spills to system memory. Each language
   layer has to be wrapped in `torch.utils.checkpoint` by hand, which is what
   `enable_manual_checkpointing()` does.
+- `prepare_model_for_kbit_training` upcasts every non-quantized parameter to
+  fp32, and this model carries a per-layer embedding table: 13 GiB of fp32
+  embeddings. `downcast_large_float32()` casts the big ones back to bf16 and
+  frees 6.5 GiB, which is what makes 2048 tokens fit. The vision and audio towers
+  are not the lever: they hold 0.10 and 0.14 GiB.
 - The vision and audio towers wrap their projections in `Gemma4ClippableLinear`,
   which peft cannot inject into, so the adapter targets a regex over
   `language_model.layers.*` only.
 
 `smoke_qlora.json` holds the last measurement verbatim.
+
+## Dataset
+
+`build_dataset.py` reads the runs that resolved with a `src_only` patch and writes
+`dataset/train.jsonl` (git-ignored; regenerable from the runs). Each sample is the
+harness system prompt, the problem statement and the teacher's patch, trimmed to
+fit 2048 tokens. The patch is never truncated.
+
+```sh
+uv run --directory training python build_dataset.py \
+  --run "runs/20261102T004141Z/report.json:results/pilot20" \
+  --run "runs/20261101T213823Z/report.json:results/pilot_01"
+```
+
+First build: 7 accepted tasks -> 5 samples of 1.8-2.0 k tokens; two rejected
+because the patch alone exceeds the context.
 
 ## What is not here yet
 
