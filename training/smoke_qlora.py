@@ -160,6 +160,18 @@ def downcast_large_float32(model, min_elements: int = 50_000_000) -> float:
     return freed / 1024**3
 
 
+def bare_causal_lm(model):
+    """Return the Gemma4ForCausalLM under an optional Peft wrapper.
+
+    ``PeftModel.base_model.model`` is the causal LM; on a bare model
+    ``base_model`` is the inner ``Gemma4Model`` and there is nothing to unwrap.
+    """
+    base = getattr(model, "base_model", None)
+    if base is not None and hasattr(base, "model"):
+        return base.model
+    return model
+
+
 def enable_manual_checkpointing(model) -> int:
     """Wrap every language layer in ``torch.utils.checkpoint``.
 
@@ -167,7 +179,7 @@ def enable_manual_checkpointing(model) -> int:
     this architecture (see the module docstring), so the layers are wrapped by
     hand. Returns the number of layers patched.
     """
-    layers = model.base_model.model.model.language_model.layers
+    layers = bare_causal_lm(model).model.language_model.layers
     for layer in layers:
         original = layer.forward
         layer.forward = partial(checkpoint, original, use_reentrant=False)
