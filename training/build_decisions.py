@@ -114,9 +114,13 @@ def main() -> int:
             if role == "assistant" and turn.get("tool"):
                 call = calls[call_index]
                 call_index += 1
-                target = {
+                # The base expects the thought before the call: the template
+                # would render them the other way round, and teacher-forced
+                # loss is 22 to 28 percent higher that way. So the thought is
+                # its own assistant turn, never merged into the call turn.
+                action = {
                     "role": "assistant",
-                    "content": pending or "",
+                    "content": "",
                     "tool_calls": [
                         {
                             "type": "function",
@@ -127,16 +131,19 @@ def main() -> int:
                         }
                     ],
                 }
+                addition = [{"role": "assistant", "content": pending}] if pending else []
+                addition.append(action)
                 pending = None
+                messages_so_far = [*history, *addition]
                 text = tokenizer.apply_chat_template(
-                    [*history, target], add_generation_prompt=False, tokenize=False
+                    messages_so_far, add_generation_prompt=False, tokenize=False
                 )
                 if len(text) > args.max_tokens * 4:
                     stats["oversize"] += 1
                 else:
                     message = {
                         "task": task,
-                        "messages": [*history, target],
+                        "messages": messages_so_far,
                         "target_index": len(history),
                     }
                     tokens = len(tokenizer(text, add_special_tokens=False)["input_ids"])
@@ -145,7 +152,7 @@ def main() -> int:
                         stats["points"] += 1
                     else:
                         stats["oversize"] += 1
-                history = [*history, target]
+                history = messages_so_far
                 continue
             if role in ("tool", "finish"):
                 if history and history[-1]["role"] == "assistant" and history[-1].get("tool_calls"):
