@@ -48,6 +48,11 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=10240)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--resolved-only",
+        action="store_true",
+        help="keep only trajectories the teacher resolved",
+    )
     args = parser.parse_args()
 
     import roundtrip_format
@@ -78,12 +83,18 @@ def main() -> int:
         for line in (run / "turns.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    if args.resolved_only:
+        report = json.loads((run / "report.json").read_text(encoding="utf-8"))
+        done = {task["instance_id"] for task in report["tasks"] if task.get("resolved")}
+        records = [record for record in records if record["task"] in done]
+        print(f"resolved-only: {len(records)} tasks")
     if args.limit:
         records = records[: args.limit]
 
     samples: list[dict] = []
     stats = {"tasks": 0, "skipped_align": 0, "skipped_missing": 0, "oversize": 0, "points": 0}
 
+    stats.update({"with_result": 0, "no_result": 0, "orphan": 0})
     for record in records:
         task = record["task"]
         problem = problems.get(task)
@@ -153,16 +164,37 @@ def main() -> int:
                     else:
                         stats["oversize"] += 1
                 history = messages_so_far
+                # The parser attaches each observation to the call it answers;
+                # a sample that omits it teaches the model to act blind.
+                result = turn.get("result")
+                if result:
+                    history = [*history, {"role": "tool", "content": result}]
+                    stats["with_result"] += 1
+                else:
+                    stats["no_result"] += 1
                 continue
             if role in ("tool", "finish"):
-                if history and history[-1]["role"] == "assistant" and history[-1].get("tool_calls"):
-                    history = [*history, {"role": "tool", "content": turn["text"]}]
+                # An orphan output has no call to belong to. Attaching it to an
+                # unrelated turn would teach a false pairing, so it is counted
+                # and dropped rather than guessed at.
+                stats["orphan"] += 1
                 continue
 
     print(f"tasks used: {stats['tasks']}")
     print(f"skipped (misaligned): {stats['skipped_align']}")
     print(f"skipped (no problem statement): {stats['skipped_missing']}")
     print(f"decision points: {stats['points']}  oversize: {stats['oversize']}")
+
+    carried = sum(
+        1 for sample in samples if any(m["role"] == "tool" for m in sample["messages"][2:])
+    )
+    print(f"observations carried: {carried}/{len(samples)} samples")
+    print(
+        f"results attached {stats['with_result']} | calls without one {stats['no_result']}"
+        f" | orphan outputs {stats['orphan']}"
+    )
+    if samples and carried == 0:
+        raise SystemExit("no sample carries a tool observation; the builder is dropping results")
 
     if args.dry_run:
         return 0
