@@ -9,6 +9,8 @@ model by >= 3 resolved tasks on `ft-holdout` and `dev-v1` agrees.
 Test runner: `uv run pytest -q` at the root; the training project is `training/`
 (own uv project, Python 3.12, one RTX 3090 24 GB).
 Tracking issue: #180.
+Source specifications: `training/specs/gemma-4-e4b-autonomous.md`,
+`training/specs/rtx3090-hardware-profile.md`.
 
 ## Specs
 
@@ -101,10 +103,14 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
 - [ ] T2 (S5) — `inspect_model.py`: record revision, architecture, real module
   names, tokenizer/template, tool-call support and PEFT/quantization
   compatibility.
-- [ ] T3 (S6, S7) — dataset census: for `Open-SWE-Traces` v2.0, download only
-  `repo`, `language`, `resolved`, `license`, `metadata` columns; count Python,
-  resolved, per-repository and tool-mapping coverage per split; pick the split
-  by count, not by guess; record Hero/Zero as deferred.
+- [x] T3 (S6, S7) — dataset census: `Open-SWE-Traces` v2.0 `openhands`
+  measured 2026-11-09 by remote column-pruned reads (no parquet persisted):
+  82,292 rows, 50,435 Python, 38,927 resolved, 29,976 Python+resolved,
+  29,976 license-clean, 1,344 repositories, 0 read errors; leakage found and
+  excluded: `Textualize/rich` 55 rows, `encode/httpx` 8 rows. The split clears
+  any competition-bound need, so the other v2.0 splits are not scanned. Hero and
+  Zero stay deferred. Evidence:
+  `training/artifacts/reports/dataset_census_openhands.json`.
 - [ ] T4 (S8, S10) — canonical message/tool schema and deterministic OpenHands
   -> harness mapper, with round-trip test on representative records.
 - [ ] T5 (S6, S9) — filters: Python, `resolved == 1`, per-row license allowlist,

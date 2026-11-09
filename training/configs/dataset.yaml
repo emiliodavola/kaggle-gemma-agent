@@ -11,7 +11,11 @@ auxiliary:
     license: cc-by-4.0
     config: v2.0
     split: openhands
-    split_selection: highest-python-resolved-with-mappable-tools
+    split_selection: >-
+      Measured 2026-11-09: 29976 python-resolved records in this split already
+      exceed any competition-bound need, so the other v2.0 splits are not
+      scanned. The tool set is the four OpenHands tools, mappable except insert,
+      undo_edit and is_input.
     filters:
       language: python
       resolved: 1
@@ -31,3 +35,30 @@ leakage:
     - Textualize/rich
     - psf/requests
     - encode/httpx
+disk_policy:
+  full_download: forbidden
+  read_mode: remote-column-pruned
+  local_parquet_bytes: 0
+  reason: >-
+    The OpenHands split alone declares 7.05 GiB of parquet and C: has limited
+    free space. The census reads only language, resolved, repo and license over
+    HTTP range requests; no parquet file is persisted.
+measured:
+  openhands:
+    read_on: 2026-11-09
+    files: 37
+    declared_bytes: 7567594648
+    rows: 82292
+    python: 50435
+    resolved: 38927
+    python_resolved: 29976
+    python_resolved_license_ok: 29976
+    distinct_repos: 1344
+    excluded_repo_rows:
+      Textualize/rich: 55
+      encode/httpx: 8
+    tools:
+      - execute_bash
+      - finish
+      - str_replace_editor
+      - think

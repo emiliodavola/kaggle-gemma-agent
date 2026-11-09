@@ -6,15 +6,21 @@ compute capability, BF16 support, and whether bitsandbytes can build the NF4
 configuration. It never loads the model, so it is cheap on a fresh host.
 
 The report is JSON on stdout. Exit code 0 means the host matches the RTX 3090
-profile; 1 means at least one compatibility problem is listed in the report.
+profile; 1 means at least one compatibility problem is listed in the report. By
+default the same JSON is written to
+``training/artifacts/reports/environment.json``.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import pathlib
 import platform
 import subprocess
 import sys
+
+from e4b_training.utils.paths import ARTIFACTS_DIR
 
 
 def _nvidia_smi() -> dict:
@@ -116,10 +122,29 @@ def compatibility(report: dict) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Report the training host.")
+    parser.add_argument(
+        "--out",
+        type=pathlib.Path,
+        default=ARTIFACTS_DIR / "reports" / "environment.json",
+        help="where to write the JSON report",
+    )
+    parser.add_argument(
+        "--stdout-only",
+        action="store_true",
+        help="print the report without writing a file",
+    )
+    args = parser.parse_args(argv)
+
     report = collect()
     report["compatibility_problems"] = compatibility(report)
-    print(json.dumps(report, indent=2))
+    payload = json.dumps(report, indent=2)
+    print(payload)
+    if not args.stdout_only:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(payload + "\n", encoding="utf-8")
+        print(f"wrote {args.out}", file=sys.stderr)
     return 0 if not report["compatibility_problems"] else 1
 
 

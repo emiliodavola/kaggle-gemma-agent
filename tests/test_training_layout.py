@@ -45,6 +45,16 @@ def test_external_trajectories_are_mapped_not_raw() -> None:
     assert "submission/prompts/system.md" in runtime
 
 
+def test_dataset_census_is_remote_and_bounded() -> None:
+    dataset = (TRAINING / "configs" / "dataset.yaml").read_text(encoding="utf-8")
+    assert "full_download: forbidden" in dataset
+    assert "read_mode: remote-column-pruned" in dataset
+    assert "local_parquet_bytes: 0" in dataset
+    assert "python_resolved: 29976" in dataset
+    assert (TRAINING / "src" / "e4b_training" / "data" / "census.py").is_file()
+    assert (TRAINING / "scripts" / "dataset_census.py").is_file()
+
+
 def test_training_stays_on_python_312() -> None:
     pyproject = (TRAINING / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.12,<3.13"' in pyproject
