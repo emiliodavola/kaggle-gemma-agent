@@ -108,6 +108,7 @@ inside `submission/`.
 
 The G4-PY-AGENT-001 specification and its RTX 3090 override are adopted here,
 under the competition contract, without growing a second top-level project.
+Both source documents live in `training/specs/`.
 `training/STRUCTURE.md` holds the full map; the essentials:
 
 - `configs/` pins the measured envelope (`qlora.yaml`: 10240 tokens, manual

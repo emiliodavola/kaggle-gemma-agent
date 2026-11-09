@@ -3,7 +3,7 @@
 This file maps the G4-PY-AGENT-001 tree onto this repository. It exists because
 the specification describes a standalone project while this repository already
 owns the competition line; nothing here creates a second top-level project or
-touches `submission/`.
+touches `submission/`. The source documents live in `training/specs/`.
 
 ## Present
 
