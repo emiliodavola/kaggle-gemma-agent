@@ -8,6 +8,7 @@ Delivery strategy: `ask-on-risk`; the adapter ships only if it beats the base
 model by >= 3 resolved tasks on `ft-holdout` and `dev-v1` agrees.
 Test runner: `uv run pytest -q` at the root; the training project is `training/`
 (own uv project, Python 3.12, one RTX 3090 24 GB).
+Tracking issue: #180.
 
 ## Specs
 
