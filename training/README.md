@@ -103,3 +103,30 @@ because the patch alone exceeds the context.
 Dataset generation, the training script and the adapter live in stages S1-S7 of
 the proposal and land in this directory as they are built. Nothing here ships
 inside `submission/`.
+
+## Specification-aligned layout (2026-11-09)
+
+The G4-PY-AGENT-001 specification and its RTX 3090 override are adopted here,
+under the competition contract, without growing a second top-level project.
+`training/STRUCTURE.md` holds the full map; the essentials:
+
+- `configs/` pins the measured envelope (`qlora.yaml`: 10240 tokens, manual
+  checkpointing, int8 embedding table, chunked loss) and the dataset policy
+  (`dataset.yaml`: Open-SWE-Traces only, Hero/Zero deferred).
+- `src/e4b_training/` is the future package surface; `utils/paths.py` and
+  `utils/environment.py` are the first real modules.
+- `scripts/validate_environment.py` prints the host report and exits non-zero
+  when the card, CUDA, or the NF4 configuration is not usable.
+- `data/` and `artifacts/` are documented, git-ignored working directories.
+
+The working entry points (`smoke_qlora.py`, `smoke_train.py`, `train_lora.py`,
+`build_dataset.py`, `build_decisions.py`, `parse_session.py`,
+`roundtrip_format.py`, `compare_order.py`, `eval_holdout.py`) stay in place until
+their migration lands, so every documented command keeps working.
+
+```sh
+uv run --directory training python scripts/validate_environment.py
+```
+
+The competition surface is byte-identical: `submission/`, `src/kaggle_gemma_agent/`
+and the harness scripts are not touched by this layout.

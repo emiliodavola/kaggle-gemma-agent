@@ -1,0 +1,35 @@
+schema_version: "1.0"
+harness_tools:
+  - run_command
+  - submit_patch
+  - get_status
+  - read_file
+  - edit_file
+  - write_file
+  - get_code_neighbors
+  - search_similar_code
+  - get_code_subgraph
+  - agent_tool
+limits:
+  max_tool_calls: 100
+  max_time_minutes: 60
+  max_turns: 500
+  command_timeout_seconds: 300
+  read_file_max_lines: 150
+  read_file_max_chars: 10000
+openhands_mapping:
+  execute_bash: run_command
+  think: assistant_thought
+  finish: terminal_text
+  str_replace_editor_view: read_file
+  str_replace_editor_create: write_file
+  str_replace_editor_str_replace: edit_file
+drop:
+  - str_replace_editor_insert
+  - str_replace_editor_undo_edit
+  - execute_bash_is_input
+note: >-
+  External trajectories are auxiliary. Every record replaces the source system
+  prompt with submission/prompts/system.md and is re-serialized through the
+  Gemma 4 chat template. A record with an unmappable call is dropped, never
+  silently converted.

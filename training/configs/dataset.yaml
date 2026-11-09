@@ -1,0 +1,33 @@
+schema_version: "1.0"
+primary:
+  name: harness-teacher-trajectories
+  train_split: experiments/subsets/ft-train.json
+  holdout_split: experiments/subsets/ft-holdout.json
+  selection: resolved-and-src-only
+auxiliary:
+  open_swe_traces:
+    id: nvidia/Open-SWE-Traces
+    revision: 4fa4c2ae9afc6b397bc50391d43450c79993c138
+    license: cc-by-4.0
+    config: v2.0
+    split: openhands
+    split_selection: highest-python-resolved-with-mappable-tools
+    filters:
+      language: python
+      resolved: 1
+      license_allowlist:
+        - MIT
+        - Apache-2.0
+        - BSD-2-Clause
+        - BSD-3-Clause
+deferred:
+  - id: nvidia/SWE-Hero-openhands-trajectories
+    reason: no language column and no resolved column
+  - id: nvidia/SWE-Zero-openhands-trajectories
+    reason: no language column, no resolved column, execution-free
+leakage:
+  exclude_repos:
+    - fastapi/fastapi
+    - Textualize/rich
+    - psf/requests
+    - encode/httpx
