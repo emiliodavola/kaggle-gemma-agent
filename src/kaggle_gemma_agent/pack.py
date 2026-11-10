@@ -52,6 +52,26 @@ STACK_DIR = "skills"
 SCRIPTS_DIR = "scripts"
 SKILL_MANIFEST = "SKILL.md"
 FORBIDDEN_NAMES = frozenset({"agent.py"})
+#: Binary artifacts ship as-is; their bytes are not a declarative text surface,
+#: so the rule-e string scan skips them. A text file with the same token still
+#: fails.
+BINARY_SUFFIXES = frozenset(
+    {
+        ".safetensors",
+        ".bin",
+        ".pt",
+        ".pth",
+        ".gguf",
+        ".onnx",
+        ".zip",
+        ".parquet",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".pdf",
+        ".npz",
+    }
+)
 
 # Competition contract, traceable to ``AGENTS.md`` and
 # ``docs/skill-stack-inventory.md`` section A (see PR #9 compliance table).
@@ -312,6 +332,8 @@ def _check_forbidden_strings(
 ) -> None:
     """Rule e: no network, pip, MCP, or subprocess strings anywhere."""
     for path in files:
+        if path.suffix.lower() in BINARY_SUFFIXES:
+            continue
         rel = path.relative_to(source_dir)
         matches = FORBIDDEN_PATTERNS.finditer(_read_text(path))
         hits = sorted({match.group(0).lower() for match in matches})

@@ -257,3 +257,5 @@ node_modules/
 # Reference notebooks supplied by Kaggle; inputs, never commit them.
 /notebooks/getting-started-gemma-4-developer-agent.ipynb
 /notebooks/gemma-4-developer-agent-small-model-leaderboard.ipynb
+
+submission/adapters/**/adapter_model.safetensors
