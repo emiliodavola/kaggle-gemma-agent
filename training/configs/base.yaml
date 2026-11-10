@@ -1,0 +1,15 @@
+schema_version: "1.0"
+model:
+  train_id: google/gemma-4-E4B-it
+  train_revision: 4ecc2ba63bcac23ba4a767fc87025b1450f84c9c
+  score_id: gemma-4-e4b-it-qat-w4a16-ct
+  score_revision: 6cd26aaa2357fb2bad8c51699a7558a4d1a965bb
+  architecture: gemma4
+  modality: any-to-any
+paths:
+  training_root: training
+  dataset_dir: training/dataset
+  runs_dir: runs
+  adapters_dir: training/adapters
+  artifacts_dir: training/artifacts
+seed: 20261109

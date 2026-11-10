@@ -1,0 +1,32 @@
+schema_version: "2.0"
+harness_tools:
+  - run_command
+  - submit_patch
+  - get_status
+  - read_file
+  - edit_file
+  - write_file
+  - get_code_neighbors
+  - search_similar_code
+  - get_code_subgraph
+  - agent_tool
+dataset_tools:
+  - run_command
+  - read_file
+  - edit_file
+  - write_file
+  - submit_patch
+  - get_status
+limits:
+  max_tool_calls: 100
+  max_time_minutes: 60
+  max_turns: 500
+  command_timeout_seconds: 300
+  read_file_max_lines: 150
+  read_file_max_chars: 10000
+note: >-
+  The dataset is harness-native. No tool-name mapping is applied. Every record
+  replaces the dataset system prompt with submission/prompts/system.md, strips
+  null tool arguments and is validated against the harness tool set. The
+  canonical schema supports multiple tool calls per assistant turn (407 such
+  turns in the audited corpus) and pairs every tool result by tool_call_id.

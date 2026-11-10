@@ -2,3 +2,10 @@
 dataset/
 adapters/
 runs/
+artifacts/*
+!artifacts/README.md
+data/raw/*
+data/intermediate/*
+data/processed/*
+data/preferences/*
+data/manifests/*

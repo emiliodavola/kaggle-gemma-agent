@@ -1,0 +1,123 @@
+schema_version: "2.0"
+primary:
+  id: vishalxyzabc7527/gemma4-swe-agent-sft-harness
+  revision: 7b3c7d619fa3c2f5d24a33bce5b413dcc48b2680
+  name: Gemma 4 SWE-agent SFT trajectories (harness-week-3)
+  license: mixed
+  license_detail: >-
+    Dataset metadata is CC-BY-4.0. Source code quoted in tool outputs stays under
+    each repository's permissive license, recorded per row in
+    license.repository_license. Assistant turns were generated with Anthropic
+    Claude and remain subject to Anthropic's terms.
+  config: sft
+  train: data/sft_train.jsonl
+  validation: data/sft_val.jsonl
+  format: harness-native
+  tools:
+    - run_command
+    - read_file
+    - edit_file
+    - write_file
+    - submit_patch
+    - get_status
+  filters:
+    verification_status: VERIFIED
+    is_successful_demonstration: true
+    repository_license_allowlist:
+      - MIT License
+      - Apache License 2.0
+      - BSD 3-Clause "New" or "Revised" License
+      - BSD License
+      - BSD 2-Clause "Simplified" License
+      - BSD
+      - Zope Public License 2.1
+      - BSD 3-Clause
+      - BSD-3-Clause
+      - ISC License
+      - BSD 2-clause license
+      - Creative Commons Zero v1.0 Universal
+      - Apache License 2.0 or MIT License
+      - New BSD License
+      - The Unlicense
+      - MIT/X Consortium license
+      - MIT/Apache-2.0 Dual License
+      - Apache 2.0 or BSD3
+      - BSD 3-Clause License
+  system_prompt: submission/prompts/system.md
+  replacements:
+    - The dataset system message is replaced with the shipped prompt.
+    - Tool arguments are null-stripped and validated against the harness set.
+    - Multiple tool calls in one assistant turn are preserved and paired by tool_call_id.
+optional_buckets:
+  recovery:
+    train: data/recovery_train.jsonl
+    validation: data/recovery_val.jsonl
+    use: later, for the recovery phase
+  partial:
+    train: data/partial.jsonl
+    use: excluded from SFT; incomplete trajectories
+superseded:
+  - id: nvidia/Open-SWE-Traces
+    reason: >-
+      Four foreign tools and a foreign system prompt; superseded by the
+      harness-native dataset that already uses the swegemma tool names.
+deferred:
+  - id: nvidia/SWE-Hero-openhands-trajectories
+    reason: no language column and no resolved column
+  - id: nvidia/SWE-Zero-openhands-trajectories
+    reason: no language column, no resolved column, execution-free
+leakage:
+  exclude_repos:
+    - fastapi/fastapi
+    - Textualize/rich
+    - psf/requests
+    - encode/httpx
+disk_policy:
+  full_download: forbidden
+  read_mode: streamed-jsonl
+  local_bytes: 0
+  reason: >-
+    The sft config is about 114 MB of JSONL. The audit streams it line by line
+    and persists nothing; the adapter ships, the corpus does not.
+measured:
+  read_on: 2026-11-09
+  splits:
+    train: 1217
+    validation: 133
+  rows: 1350
+  distinct_task_ids: 1350
+  distinct_repositories: 722
+  verification_status:
+    VERIFIED: 1350
+  is_successful_demonstration:
+    "True": 1350
+  tool_calls: 18202
+  assistant_messages: 26633
+  tool_messages: 18202
+  multiple_calls_in_turn: 407
+  test_results_rows: 1350
+  test_exit_codes:
+    "0": 1108
+    "1": 242
+  tool_names:
+    - edit_file
+    - get_status
+    - read_file
+    - run_command
+    - submit_patch
+    - write_file
+  orphan_tool_results: 0
+  unknown_tool_names: 0
+  excluded_repo_rows: 0
+  holdout_repository_overlap: 0
+  source_datasets:
+    nebius/SWE-rebench: 1350
+  teacher_models:
+    claude-opus-5-5: 1013
+    claude-sonnet-5-5: 337
+  dataset_license: cc-by-4.0
+  notes: >-
+    242 records carry test_results.exit_code 1 while verification_status is
+    VERIFIED. The command exit is not the verdict; the FAIL_TO_PASS and
+    PASS_TO_PASS status_reasons are. The mapper keeps both and never rewrites
+    the verdict.
