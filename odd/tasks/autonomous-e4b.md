@@ -100,9 +100,12 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
 - [x] T1 (S3) — `training/scripts/validate_environment.py` emits the hardware
   report and writes `training/artifacts/reports/environment.json`: RTX 3090,
   24 GB, CUDA 12.8, BF16 true, NF4 true, `compatibility_problems: []`.
-- [ ] T2 (S5) — `inspect_model.py`: record revision, architecture, real module
-  names, tokenizer/template, tool-call support and PEFT/quantization
-  compatibility.
+- [x] T2 (S5) — `inspect_model.py` reads the local safetensors header without
+  loading the 16 GB weights: 42 language layers, 294 target-module matches,
+  `q_proj/k_proj/v_proj/o_proj` and `gate_proj/up_proj/down_proj` present,
+  vision and audio towers present, `<|tool_call>` and `<|tool_response>` in the
+  template, PEFT accepts the target regex. Evidence:
+  `training/artifacts/reports/model_inspection.json`.
 - [x] T3 (S6, S7) — dataset audit by streaming `data/sft_train.jsonl` and
   `data/sft_val.jsonl` (no JSONL persisted): 1,350 rows (1,217/133), 1,350
   distinct tasks, 722 repositories, all `VERIFIED` and successful, 18,202 tool
