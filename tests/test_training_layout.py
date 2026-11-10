@@ -24,6 +24,8 @@ def test_package_layout_exists() -> None:
     assert (package / "__init__.py").is_file()
     assert (package / "data" / "__init__.py").is_file()
     assert (package / "data" / "audit.py").is_file()
+    assert (package / "data" / "canonical.py").is_file()
+    assert (package / "data" / "harness_records.py").is_file()
     assert (package / "training" / "__init__.py").is_file()
     assert (package / "evaluation" / "__init__.py").is_file()
     assert (package / "utils" / "paths.py").is_file()

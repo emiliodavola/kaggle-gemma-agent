@@ -109,11 +109,14 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
   calls, 26,633 assistant messages, 407 multi-call turns, 0 orphan results, 0
   unknown tools, 0 excluded competition repositories, 0 holdout repository
   overlap. Evidence: `training/artifacts/reports/dataset_audit.json`.
-- [ ] T4 (S8, S10) — canonical message/tool schema and harness-native record
-  mapper: replace the system prompt, strip null arguments, map verification
-  status, preserve multiple calls per turn, pair results by `tool_call_id`, and
-  drop invalid records with a reason. Round-trip test plus fixtures from the
-  audited schema.
+- [x] T4 (S8, S10) — canonical message/tool schema and harness-native record
+  mapper: replaces the system prompt, strips null arguments, maps verification
+  status, preserves multiple calls per turn, pairs results by `tool_call_id`,
+  and drops invalid records with a reason. Evidence:
+  `training/src/e4b_training/data/canonical.py`,
+  `training/src/e4b_training/data/harness_records.py`,
+  `tests/test_harness_records.py` (19 tests, all green; 50/50 real rows mapped
+  from `sft/train` with 0 drops).
 - [ ] T5 (S6, S9) — filters: `verification_status == VERIFIED`,
   `is_successful_demonstration == true`, per-row repository license allowlist
   and competition-repository exclusion; provenance preserved.
