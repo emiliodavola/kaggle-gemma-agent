@@ -137,14 +137,18 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
   2026-11-10 00:18Z (PID 29840, `training/runs/t8.log`): step 1/300,
   90.9 s/step, GPU 21.6 GiB used / 2.7 GiB free. The task closes when
   `training/adapters/t8/final` exists and the loss curve is recorded.
-- [ ] T9 (S11) — evaluate on `ft-holdout` and `dev-v1`, per repository, JSON and
-  Markdown reports; decide ship/no-ship at +3 resolved tasks.
-- [ ] T10 (S2) — load the adapter through vLLM with `qat-w4a16` (WSL or Kaggle)
-  and prove parity with the training checkpoint.
-- [ ] T11 (S1) — package the adapter under `submission/adapters/`, run the
-  compliance gate and record the journal entry.
-- [ ] T12 (optional) — DPO only if >= 500 verified preference pairs exist;
-  otherwise defer.
+- [x] T9 (S11) — holdout evaluation, run `20261110T130026Z`: 29 tasks,
+  **1 resolved (rate 0.034)** against the base E4B's 8/29 (0.276). No ship.
+  Failures: 19 context-window overflows, 5 tasks without `submit_patch`, 4
+  tool-budget exhaustions; the only pass is `fastapi_14786`. Evidence:
+  `runs/kaggle-t9/kaggle-remote-run/artifacts/runs/20261110T130026Z/STATUS`.
+- [x] T10 (S2) — the adapter loaded in vLLM `qat-w4a16`:
+  `served: ['/kaggle/input/models/google/gemma-4/other/gemma-4-e4b-it-qat-w4a16-ct/2', 'main_lora']`.
+  The load parity is proven; the behavioural parity is a regression.
+- [x] T11 (S1) — packaged under `submission/adapters/` (279,129,344 bytes),
+  gate 6/6; `submission.zip` 258,077,693 bytes. After T9 the `adapter:` reference
+  is removed from `submission/agent.yaml`; the files stay for future experiments.
+- [ ] T12 (optional) — DPO is deferred: no 500 verified preference pairs exist.
 
 ## Log
 
@@ -188,5 +192,7 @@ necesario cambiá el issue o la documentación"
 
 ## Next
 
-T8 is running. When `training/adapters/t8/final` exists, T9 evaluates it on
-`ft-holdout` and `dev-v1`; T10 proves vLLM `qat-w4a16` parity; T11 packages it.
+The base model remains the submission. If the adapter is retried, train a
+smaller or shorter adapter against the QAT behaviour and re-run T9; the first
+adapter is not shippable. T12 stays deferred until 500 verified preference pairs
+exist.
