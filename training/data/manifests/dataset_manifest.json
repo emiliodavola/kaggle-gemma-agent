@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "dataset": "vishalxyzabc7527/gemma4-swe-agent-sft-harness",
+  "revision": "7b3c7d619fa3c2f5d24a33bce5b413dcc48b2680",
+  "source_rows": 1350,
+  "mapped": 1350,
+  "mapped_ok": 1327,
+  "invalid": 23,
+  "kept": 1327,
+  "dropped": 23,
+  "drop_reasons": {
+    "assistant-before-tool-result": 23
+  },
+  "splits": {
+    "train": 1197,
+    "validation": 130
+  },
+  "tool_names": {
+    "edit_file": 1327,
+    "submit_patch": 1327,
+    "run_command": 1326,
+    "read_file": 1134,
+    "write_file": 105,
+    "get_status": 1
+  },
+  "multi_call_turns": 343,
+  "distinct_repositories": 718,
+  "distinct_conversations": 1327,
+  "license_counts": {
+    "MIT License": 627,
+    "Apache License 2.0": 338,
+    "BSD 3-Clause \"New\" or \"Revised\" License": 214,
+    "BSD License": 46,
+    "BSD 2-Clause \"Simplified\" License": 33,
+    "BSD": 15,
+    "Zope Public License 2.1": 15,
+    "BSD 3-Clause": 6,
+    "BSD-3-Clause": 6,
+    "ISC License": 5,
+    "BSD 2-clause license": 4,
+    "Creative Commons Zero v1.0 Universal": 4,
+    "New BSD License": 3,
+    "The Unlicense": 3,
+    "Apache License 2.0 or MIT License": 3,
+    "MIT/X Consortium license": 2,
+    "MIT/Apache-2.0 Dual License": 1,
+    "Apache 2.0 or BSD3": 1,
+    "BSD 3-Clause License": 1
+  },
+  "excluded_repositories": [
+    "Textualize/rich",
+    "encode/httpx",
+    "fastapi/fastapi",
+    "psf/requests"
+  ],
+  "holdout_repositories": [
+    "Textualize/rich",
+    "fastapi/fastapi",
+    "psf/requests"
+  ],
+  "system_prompt_sha256": "7cb891198d43afd12b73725386fc0f3c3a329089d680081661357311936d929e"
+}
