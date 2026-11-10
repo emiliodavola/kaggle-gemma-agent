@@ -26,12 +26,14 @@ def test_package_layout_exists() -> None:
     assert (package / "data" / "audit.py").is_file()
     assert (package / "data" / "canonical.py").is_file()
     assert (package / "data" / "harness_records.py").is_file()
+    assert (package / "data" / "pipeline.py").is_file()
     assert (package / "training" / "__init__.py").is_file()
     assert (package / "evaluation" / "__init__.py").is_file()
     assert (package / "utils" / "paths.py").is_file()
     assert (package / "utils" / "environment.py").is_file()
     assert (TRAINING / "scripts" / "validate_environment.py").is_file()
     assert (TRAINING / "scripts" / "dataset_audit.py").is_file()
+    assert (TRAINING / "scripts" / "prepare_sft_dataset.py").is_file()
 
 
 def test_deferred_datasets_are_documented() -> None:

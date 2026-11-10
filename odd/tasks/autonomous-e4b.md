@@ -117,13 +117,17 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
   `training/src/e4b_training/data/harness_records.py`,
   `tests/test_harness_records.py` (19 tests, all green; 50/50 real rows mapped
   from `sft/train` with 0 drops).
-- [ ] T5 (S6, S9) — filters: `verification_status == VERIFIED`,
+- [x] T5 (S6, S9) — filters: `verification_status == VERIFIED`,
   `is_successful_demonstration == true`, per-row repository license allowlist
-  and competition-repository exclusion; provenance preserved.
-- [ ] T6 (S9) — deduplication (exact/normalized conversation hash, task hash,
-  repo+issue, patch hash) and repository-level leakage report.
-- [ ] T7 (S9) — repository-grouped splits and versioned manifests for the
-  training corpus, separate from `ft-holdout`/`dev-v1`.
+  and competition-repository exclusion. Evidence:
+  `training/data/manifests/dataset_manifest.json`: 1,350 source rows, 1,327
+  kept, 23 invalid, 0 filter rejections, 718 repositories.
+- [x] T6 (S9) — deduplication on conversation, task, repo+issue and patch
+  hashes; 1,327 distinct conversations, 0 duplicates, 0 holdout repository
+  overlap. Evidence: `training/data/manifests/dataset_manifest.json`.
+- [x] T7 (S9) — splits and versioned manifest: 1,197 train / 130 validation;
+  `ft-holdout` and `dev-v1` untouched; the manifest is committed at
+  `training/data/manifests/dataset_manifest.json`.
 - [ ] T8 (S3, S4, S10) — first SFT at the measured 10240 configuration with the
   mandatory preflight (forward, backward, optimizer step, >= 2 GB headroom,
   adapter save/reload); checkpoint and resume.
