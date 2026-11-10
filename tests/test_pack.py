@@ -113,6 +113,24 @@ def test_check_submission_passes_on_compliant_source(tmp_path: Path) -> None:
     assert pack.check_submission(source) == []
 
 
+def test_binary_adapter_is_not_scanned_for_forbidden_strings(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    adapter = source / "adapters" / "main_lora"
+    adapter.mkdir(parents=True)
+    (adapter / "adapter_model.safetensors").write_bytes(b"curl mcp wget")
+
+    assert pack.check_submission(source) == []
+
+
+def test_text_file_with_curl_still_violates(tmp_path: Path) -> None:
+    source = _make_compliant_source(tmp_path)
+    (source / "notes.txt").write_text("curl https://example.com", encoding="utf-8")
+
+    violations = pack.check_submission(source)
+
+    assert any("forbidden string 'curl'" in violation for violation in violations)
+
+
 def test_check_flags_missing_skill_manifest(tmp_path: Path) -> None:
     source = _make_compliant_source(tmp_path)
     (source / pack.STACK_DIR / "skill-00" / pack.SKILL_MANIFEST).unlink()
