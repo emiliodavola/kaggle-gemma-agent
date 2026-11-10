@@ -49,7 +49,13 @@ def encode(tokenizer, messages: list[dict], max_tokens: int):
     return ids[:, :max_tokens].to("cuda")
 
 
-def build_model(model_dir: Path, int8_embeddings: bool, wrap: bool = True):
+def build_model(
+    model_dir: Path,
+    int8_embeddings: bool,
+    wrap: bool = True,
+    rank: int = LORA_RANK,
+    alpha: int = LORA_ALPHA,
+):
     """Load, prepare and optionally attach a fresh adapter.
 
     ``wrap=False`` returns the bare base: passing an already-wrapped PeftModel to
@@ -69,8 +75,8 @@ def build_model(model_dir: Path, int8_embeddings: bool, wrap: bool = True):
     model = get_peft_model(
         model,
         LoraConfig(
-            r=LORA_RANK,
-            lora_alpha=LORA_ALPHA,
+            r=rank,
+            lora_alpha=alpha,
             target_modules=LORA_TARGETS,
             lora_dropout=0.0,
             bias="none",

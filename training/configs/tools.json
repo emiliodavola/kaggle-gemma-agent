@@ -1,0 +1,127 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "run_command",
+      "description": "Execute a shell command with /bin/bash -c inside /workspace. Commands time out after 300 seconds; stdout and stderr are truncated to 5000 characters. Returns JSON with status, stdout and exit_code, or an error with details.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to run."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read a file under /workspace with 1-indexed, inclusive line slicing. At most 150 lines and 10000 characters are returned per call; is_truncated reports when a limit was reached.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filepath": {
+            "type": "string",
+            "description": "Path relative to /workspace."
+          },
+          "start_line": {
+            "type": "integer",
+            "description": "First line to return (1-indexed)."
+          },
+          "end_line": {
+            "type": "integer",
+            "description": "Last line to return (inclusive)."
+          }
+        },
+        "required": [
+          "filepath"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "edit_file",
+      "description": "Replace old_string with new_string in an existing, non-empty file under /workspace. Tries exact, whitespace-flexible and regex matching in turn. Fails if old_string matches more than once unless allow_multiple is true. Returns the resulting diff.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filepath": {
+            "type": "string",
+            "description": "Path relative to /workspace."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "Text to replace."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "Replacement text."
+          },
+          "allow_multiple": {
+            "type": "boolean",
+            "description": "Replace every occurrence."
+          }
+        },
+        "required": [
+          "filepath",
+          "old_string",
+          "new_string"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write_file",
+      "description": "Create or overwrite a file at /workspace/<filepath>, creating parent directories as needed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filepath": {
+            "type": "string",
+            "description": "Path relative to /workspace."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full file content."
+          }
+        },
+        "required": [
+          "filepath",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "submit_patch",
+      "description": "Capture the current changes in /workspace (git add -N . && git diff HEAD) as the final patch and end the task once this turn finishes. Does not count toward the tool-call budget.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_status",
+      "description": "Return budget consumption (tool calls used and remaining, time remaining) and whether a patch has been submitted. Free; never fails because of the budget.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  }
+]
