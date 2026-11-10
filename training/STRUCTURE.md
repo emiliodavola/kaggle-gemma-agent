@@ -19,11 +19,12 @@ touches `submission/`. The source documents live in `training/specs/`.
 
 | Specification path | Current implementation | Task |
 |--------------------|------------------------|------|
-| `src/data/` | `training/parse_session.py`, `build_dataset.py`, `build_decisions.py` | T4-T7 |
+| `src/data/` | `training/src/e4b_training/data/audit.py`; the flat `parse_session.py` and `build_decisions.py` remain for the harness teacher path | T4-T7 |
+| `scripts/dataset_audit.py` | present: streams the harness-native JSONL and writes the census | done |
 | `src/training/` | `training/smoke_qlora.py`, `smoke_train.py`, `train_lora.py` | T8 |
 | `src/evaluation/` | `training/eval_holdout.py`, `compare_order.py`, `roundtrip_format.py` | T9 |
 | `scripts/inspect_model.py` | not implemented | T2 |
-| `scripts/download_datasets.py` and the dataset stage | not implemented | T3-T7 |
+| `scripts/download_datasets.py` and the dataset stage | `scripts/dataset_audit.py` streams the source; normalization, filtering, dedup and split are not implemented | T4-T7 |
 | `scripts/train_dpo.py` and `src/training/dpo.py` | disabled until 500 verified pairs | T12 |
 
 ## Deferred by decision

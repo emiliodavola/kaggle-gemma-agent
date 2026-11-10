@@ -23,11 +23,13 @@ def test_package_layout_exists() -> None:
     package = TRAINING / "src" / "e4b_training"
     assert (package / "__init__.py").is_file()
     assert (package / "data" / "__init__.py").is_file()
+    assert (package / "data" / "audit.py").is_file()
     assert (package / "training" / "__init__.py").is_file()
     assert (package / "evaluation" / "__init__.py").is_file()
     assert (package / "utils" / "paths.py").is_file()
     assert (package / "utils" / "environment.py").is_file()
     assert (TRAINING / "scripts" / "validate_environment.py").is_file()
+    assert (TRAINING / "scripts" / "dataset_audit.py").is_file()
 
 
 def test_deferred_datasets_are_documented() -> None:
@@ -38,21 +40,25 @@ def test_deferred_datasets_are_documented() -> None:
     assert "execution-free" in dataset
 
 
-def test_external_trajectories_are_mapped_not_raw() -> None:
+def test_dataset_is_harness_native_and_prompt_is_replaced() -> None:
     runtime = (TRAINING / "configs" / "runtime.yaml").read_text(encoding="utf-8")
-    assert "execute_bash: run_command" in runtime
-    assert "str_replace_editor_str_replace: edit_file" in runtime
+    assert "dataset_tools:" in runtime
+    assert "run_command" in runtime
     assert "submission/prompts/system.md" in runtime
+    assert "No tool-name mapping is applied" in runtime
+    assert "execute_bash" not in runtime
 
 
-def test_dataset_census_is_remote_and_bounded() -> None:
+def test_dataset_audit_is_streamed_and_bounded() -> None:
     dataset = (TRAINING / "configs" / "dataset.yaml").read_text(encoding="utf-8")
+    assert "id: vishalxyzabc7527/gemma4-swe-agent-sft-harness" in dataset
     assert "full_download: forbidden" in dataset
-    assert "read_mode: remote-column-pruned" in dataset
-    assert "local_parquet_bytes: 0" in dataset
-    assert "python_resolved: 29976" in dataset
-    assert (TRAINING / "src" / "e4b_training" / "data" / "census.py").is_file()
-    assert (TRAINING / "scripts" / "dataset_census.py").is_file()
+    assert "read_mode: streamed-jsonl" in dataset
+    assert "local_bytes: 0" in dataset
+    assert "rows: 1350" in dataset
+    assert "verification_status:\n    VERIFIED: 1350" in dataset
+    assert (TRAINING / "src" / "e4b_training" / "data" / "audit.py").is_file()
+    assert (TRAINING / "scripts" / "dataset_audit.py").is_file()
 
 
 def test_training_stays_on_python_312() -> None:

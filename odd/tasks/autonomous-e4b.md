@@ -49,37 +49,37 @@ working implementation targets `language_model.layers.*`. The vision and audio
 towers wrap projections in `Gemma4ClippableLinear`, which PEFT cannot inject
 into. Evidence: `training/README.md`, `training/smoke_qlora.py`.
 
-**S6 — Open-SWE-Traces is the only external dataset with usable filters.**
-`nvidia/Open-SWE-Traces` revision
-`4fa4c2ae9afc6b397bc50391d43450c79993c138`, license `cc-by-4.0`, exposes
-`language` and `resolved` (int32) plus `repo`, `license`, `messages`, `tools`,
-`metadata{category,teacher_model,reference_patch,model_patch}` and
-`hf_dataset_name`. Configuration `v2.0` (teacher `Qwen3.8-Flash-Next`) is the
-newest. Evidence: HF dataset API and rows, read 2026-11-09.
+**S6 — The harness-native dataset is the only training source.**
+`vishalxyzabc7527/gemma4-swe-agent-sft-harness` revision
+`7b3c7d619fa3c2f5d24a33bce5b413dcc48b2680`, config `sft`, splits `train`
+(1,217) and `validation` (133). It ships 1,350 records, all `VERIFIED` and
+`is_successful_demonstration`, with 722 repositories, 18,202 tool calls, 26,633
+assistant messages, 407 multi-call turns, no orphan tool results and no unknown
+tool names. It uses the harness tools directly (`run_command`, `read_file`,
+`edit_file`, `write_file`, `submit_patch`, `get_status`). Dataset license is
+`cc-by-4.0`; per-row repository licenses are permissive. Evidence:
+`training/artifacts/reports/dataset_audit.json`, read 2026-11-09.
 
-**S7 — SWE-Hero and SWE-Zero are deferred.** Both expose only
-`instance_id, repo, license, trajectory_id, trajectory, model_patch, dataset`;
-neither has `language` nor `resolved`. SWE-Zero is explicitly execution-free.
-Filtering Python would require an unverified repository-name heuristic, and
-"resolved" cannot be established at all. They stay out of SFT until a verified
-language and execution signal exists. Evidence: HF dataset cards, read 2026-11-09.
+**S7 — Open-SWE-Traces is superseded; Hero and Zero stay deferred.**
+`nvidia/Open-SWE-Traces` uses four foreign tools and a foreign system prompt, so
+it is no longer a training source. `SWE-Hero` and `SWE-Zero` expose neither
+`language` nor `resolved`, and SWE-Zero is execution-free; both remain out of
+SFT until a verified language and execution signal exists.
 
-**S8 — External trajectories are auxiliary and must be re-serialized.** The
-`openhands` split exposes four tools (`execute_bash`, `think`, `finish`,
-`str_replace_editor`), not the harness's nine. A raw OpenHands record is
-discarded or mapped; it is never trained as-is. The harness tools are
-`run_command`, `submit_patch`, `get_status`, `read_file`, `edit_file`,
-`write_file`, `get_code_neighbors`, `search_similar_code`, `get_code_subgraph`.
-Every record must replace the OpenHands system prompt with
-`submission/prompts/system.md`, map tool calls and results, and be re-serialized
-through the Gemma 4 chat template. Evidence: HF rows for `v2.0/openhands`,
-`data/raw/HARNESS_README.md` section 6.
+**S8 — The dataset is validated, not translated.** No tool-name mapping is
+applied: every record already carries the harness tool names and a
+`tool_call_id` on every tool result. The mapper only replaces the dataset system
+message with `submission/prompts/system.md`, strips null tool arguments, maps
+`VERIFIED` -> `verified`, `PARTIALLY_VERIFIED` -> `declared`, `FAILED` ->
+`failed`, `UNVERIFIED` -> `unknown`, and preserves multiple tool calls in one
+assistant turn. A record that fails validation is dropped with a reason.
 
-**S9 — The split is fixed and leakage is checked.** Training uses only
-`experiments/subsets/ft-train.json` (100 tasks). `ft-holdout.json` (29 tasks) and
-`dev-v1` are never trained or selected on. External records whose `repo` is one
-of `fastapi/fastapi`, `Textualize/rich`, `psf/requests`, `encode/httpx` are
-excluded. Evidence: `experiments/subsets/`, `odd/tasks/lora-sft.md` S5.
+**S9 — The split is fixed and leakage is checked.** Training uses the dataset's
+own `train` split. `ft-holdout.json` (29 tasks) and `dev-v1` are never trained or
+selected on. Records whose repository is one of `fastapi/fastapi`,
+`Textualize/rich`, `psf/requests`, `encode/httpx` are excluded; the audit found
+zero such rows and zero holdout repository overlap. Evidence:
+`experiments/subsets/`, `training/artifacts/reports/dataset_audit.json`.
 
 **S10 — Loss is masked to assistant behaviour.** Tool outputs are never trained
 as assistant text; tool-call arguments and the assistant turn after a tool
@@ -97,28 +97,30 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
 - [x] T0 (S1, S3, S6, S7, S8) — write this tracker, the spec-aligned
   `training/` scaffold, configs, environment validator and layout test; prove
   the competition gate is unchanged.
-- [ ] T1 (S3) — make `training/scripts/validate_environment.py` emit the full
-  hardware report (GPU, VRAM, CUDA, torch, compute capability, BF16, BnB 4-bit
-  init, headroom) and record it under `training/artifacts/reports/`.
+- [x] T1 (S3) — `training/scripts/validate_environment.py` emits the hardware
+  report and writes `training/artifacts/reports/environment.json`: RTX 3090,
+  24 GB, CUDA 12.8, BF16 true, NF4 true, `compatibility_problems: []`.
 - [ ] T2 (S5) — `inspect_model.py`: record revision, architecture, real module
   names, tokenizer/template, tool-call support and PEFT/quantization
   compatibility.
-- [x] T3 (S6, S7) — dataset census: `Open-SWE-Traces` v2.0 `openhands`
-  measured 2026-11-09 by remote column-pruned reads (no parquet persisted):
-  82,292 rows, 50,435 Python, 38,927 resolved, 29,976 Python+resolved,
-  29,976 license-clean, 1,344 repositories, 0 read errors; leakage found and
-  excluded: `Textualize/rich` 55 rows, `encode/httpx` 8 rows. The split clears
-  any competition-bound need, so the other v2.0 splits are not scanned. Hero and
-  Zero stay deferred. Evidence:
-  `training/artifacts/reports/dataset_census_openhands.json`.
-- [ ] T4 (S8, S10) — canonical message/tool schema and deterministic OpenHands
-  -> harness mapper, with round-trip test on representative records.
-- [ ] T5 (S6, S9) — filters: Python, `resolved == 1`, per-row license allowlist,
-  mappable tools, competition-repository exclusion; provenance preserved.
+- [x] T3 (S6, S7) — dataset audit by streaming `data/sft_train.jsonl` and
+  `data/sft_val.jsonl` (no JSONL persisted): 1,350 rows (1,217/133), 1,350
+  distinct tasks, 722 repositories, all `VERIFIED` and successful, 18,202 tool
+  calls, 26,633 assistant messages, 407 multi-call turns, 0 orphan results, 0
+  unknown tools, 0 excluded competition repositories, 0 holdout repository
+  overlap. Evidence: `training/artifacts/reports/dataset_audit.json`.
+- [ ] T4 (S8, S10) — canonical message/tool schema and harness-native record
+  mapper: replace the system prompt, strip null arguments, map verification
+  status, preserve multiple calls per turn, pair results by `tool_call_id`, and
+  drop invalid records with a reason. Round-trip test plus fixtures from the
+  audited schema.
+- [ ] T5 (S6, S9) — filters: `verification_status == VERIFIED`,
+  `is_successful_demonstration == true`, per-row repository license allowlist
+  and competition-repository exclusion; provenance preserved.
 - [ ] T6 (S9) — deduplication (exact/normalized conversation hash, task hash,
   repo+issue, patch hash) and repository-level leakage report.
 - [ ] T7 (S9) — repository-grouped splits and versioned manifests for the
-  auxiliary corpus, separate from `ft-train`/`ft-holdout`.
+  training corpus, separate from `ft-holdout`/`dev-v1`.
 - [ ] T8 (S3, S4, S10) — first SFT at the measured 10240 configuration with the
   mandatory preflight (forward, backward, optimizer step, >= 2 GB headroom,
   adapter save/reload); checkpoint and resume.
@@ -152,19 +154,27 @@ estamos haciendo?"
 **L5 — Decisions taken with the user.**
 - Scope: extend `training/` and aim at the submission; the competition contract
   is the outer boundary.
-- Dataset: `Open-SWE-Traces` is the only external source kept; SWE-Hero and
-  SWE-Zero are deferred for lack of `language`/`resolved`.
-- OpenHands trajectories are auxiliary and require normalization; they are not
-  trained raw.
+- Dataset: the harness-native `vishalxyzabc7527/gemma4-swe-agent-sft-harness`
+  replaces `Open-SWE-Traces`; the OpenHands adaptation is dropped.
+- SWE-Hero and SWE-Zero remain deferred for lack of `language`/`resolved`.
 - The measured 10240 window supersedes the specification's 4096 default because
   the raw artifact is the source of truth.
 
-**L6 — Known gaps.** T3 must measure which `Open-SWE-Traces` split yields the
-most Python resolved records with mappable tools; the datasets-server
-`filter`/`search` endpoints returned HTTP 500 on 2026-11-09, so the count comes
-from a column-pruned local download, not from the web API.
+**L6 — Known gaps.** The dataset's `test_results.exit_code` is 1 in 242 records
+even though the row is `VERIFIED`; the status reasons, not the shell exit, are
+the verdict. The dataset system prompt differs from the shipped prompt, so the
+replacement is a distribution shift that T8/T9 must measure. The dataset has no
+`language` column; every source task is a Python repository tested with pytest,
+and the audit records that inference.
+
+**L7 — User request (verbatim):** "necesito que cambiemos algo importante, el
+dataset tiene que cambiar a
+https://huggingface.co/datasets/vishalxyzabc7527/gemma4-swe-agent-sft-harness
+dejemos de lado la adaptación de openhands y usemos este, rediseña todo, y si es
+necesario cambiá el issue o la documentación"
 
 ## Next
 
-T1 and T3 first: the environment report and the dataset census decide whether the
-auxiliary corpus is worth normalizing before any training change.
+T2 and T4 next: the model inspection report and the harness-native record mapper.
+T4 is the gate that decides whether the 1,350 audited trajectories can be
+serialized without losing a tool call.
