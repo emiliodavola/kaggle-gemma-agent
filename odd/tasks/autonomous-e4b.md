@@ -131,9 +131,12 @@ diagnostics, never shipping gates. Evidence: `odd/tasks/lora-sft.md` S8.
 - [x] T7 (S9) — splits and versioned manifest: 1,197 train / 130 validation;
   `ft-holdout` and `dev-v1` untouched; the manifest is committed at
   `training/data/manifests/dataset_manifest.json`.
-- [ ] T8 (S3, S4, S10) — first SFT at the measured 10240 configuration with the
-  mandatory preflight (forward, backward, optimizer step, >= 2 GB headroom,
-  adapter save/reload); checkpoint and resume.
+- [ ] T8 (S3, S4, S10) — first SFT at the measured 10240 configuration. Preflight
+  OK: 10.89 GiB peak, 2,827.8 MiB headroom, reload delta 0.0018, 69,763,072
+  trainable parameters. Smoke run: 1 optimizer step, 69.9 s. Full run launched
+  2026-11-10 00:18Z (PID 29840, `training/runs/t8.log`): step 1/300,
+  90.9 s/step, GPU 21.6 GiB used / 2.7 GiB free. The task closes when
+  `training/adapters/t8/final` exists and the loss curve is recorded.
 - [ ] T9 (S11) — evaluate on `ft-holdout` and `dev-v1`, per repository, JSON and
   Markdown reports; decide ship/no-ship at +3 resolved tasks.
 - [ ] T10 (S2) — load the adapter through vLLM with `qat-w4a16` (WSL or Kaggle)
@@ -185,6 +188,5 @@ necesario cambiá el issue o la documentación"
 
 ## Next
 
-T2 and T4 next: the model inspection report and the harness-native record mapper.
-T4 is the gate that decides whether the 1,350 audited trajectories can be
-serialized without losing a tool call.
+T8 is running. When `training/adapters/t8/final` exists, T9 evaluates it on
+`ft-holdout` and `dev-v1`; T10 proves vLLM `qat-w4a16` parity; T11 packages it.
